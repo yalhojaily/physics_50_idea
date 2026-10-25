@@ -1,0 +1,26 @@
+---
+interface Props {
+  kind?: 'myth' | 'note';
+  title?: string;
+}
+const { kind = 'note', title } = Astro.props;
+const label = title ?? (kind === 'myth' ? 'خطأ شائع' : 'لاحظ');
+---
+
+<aside class={`callout ${kind}`}>
+  <p class="t">{kind === 'myth' ? '✗ ' : '◆ '}{label}</p>
+  <slot />
+</aside>
+
+<style>
+  .callout {
+    margin: 20px 0; padding: 12px 18px; border-radius: var(--radius);
+    background: var(--surface); border: 1px solid var(--line);
+  }
+  .callout.myth { border-inline-start: 4px solid var(--bad); }
+  .callout.note { border-inline-start: 4px solid var(--c, var(--accent)); }
+  .t { margin: 0 0 4px; font-weight: 700; font-size: 15px; }
+  .myth .t { color: var(--bad); }
+  .note .t { color: var(--c, var(--accent)); }
+  .callout :global(p:last-child) { margin-bottom: 0; }
+</style>

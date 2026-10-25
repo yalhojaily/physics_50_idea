@@ -1,0 +1,157 @@
+---
+// خريطة المفاهيم: تُرسم وقت البناء من بيانات topics.ts
+import { topics, units, lessonUrl } from '../data/topics';
+
+const COL_W = 200;
+const NODE_W = 178;
+const NODE_H = 40;
+const ROW_H = 54;
+const TOP = 70;
+const PAD = 16;
+
+const width = units.length * COL_W + PAD * 2;
+const maxRows = Math.max(...units.map((u) => topics.filter((t) => t.unit === u.id).length));
+const height = TOP + maxRows * ROW_H + PAD;
+
+// الوحدة الأولى في أقصى اليمين (اتجاه القراءة العربي)
+const pos = new Map<number, { x: number; y: number }>();
+for (const u of units) {
+  const list = topics.filter((t) => t.unit === u.id);
+  const cx = width - PAD - (u.id - 0.5) * COL_W;
+  list.forEach((t, i) => pos.set(t.id, { x: cx, y: TOP + i * ROW_H + NODE_H / 2 }));
+}
+
+const edges = topics.flatMap((t) =>
+  t.prereqs.map((p) => {
+    const a = pos.get(p)!;
+    const b = pos.get(t.id)!;
+    let d: string;
+    if (Math.abs(a.x - b.x) < 1) {
+      // داخل العمود نفسه: قوس جانبي
+      const side = a.x - NODE_W / 2;
+      const bulge = 22 + Math.abs(b.y - a.y) * 0.12;
+      d = `M ${side} ${a.y} C ${side - bulge} ${a.y}, ${side - bulge} ${b.y}, ${side} ${b.y}`;
+    } else {
+      const dir = b.x < a.x ? -1 : 1;
+      const x1 = a.x + (dir * NODE_W) / 2;
+      const x2 = b.x - (dir * NODE_W) / 2;
+      const mid = (x1 + x2) / 2;
+      d = `M ${x1} ${a.y} C ${mid} ${a.y}, ${mid} ${b.y}, ${x2} ${b.y}`;
+    }
+    return { from: p, to: t.id, d, color: units[t.unit - 1].color };
+  }),
+);
+---
+
+<div class="map-scroll" id="mapScroll">
+  <svg
+    class="map"
+    viewBox={`0 0 ${width} ${height}`}
+    width={width}
+    height={height}
+    role="img"
+    aria-label="خريطة المواضيع الخمسين والعلاقات بينها"
+  >
+    {units.map((u) => {
+      const cx = width - PAD - (u.id - 0.5) * COL_W;
+      return (
+        <g>
+          <rect x={cx - COL_W / 2 + 6} y="8" width={COL_W - 12} height={height - 16} rx="16" class="col" />
+          <text x={cx} y="40" class="col-title" fill={u.color}>{u.title}</text>
+        </g>
+      );
+    })}
+
+    <g class="edges">
+      {edges.map((e) => (
+        <path d={e.d} data-from={e.from} data-to={e.to} stroke={e.color} />
+      ))}
+    </g>
+
+    {topics.map((t) => {
+      const p = pos.get(t.id)!;
+      const u = units[t.unit - 1];
+      const inner = (
+        <g class="node-g">
+          <rect x={p.x - NODE_W / 2} y={p.y - NODE_H / 2} width={NODE_W} height={NODE_H} rx="10" class="node-bg" style={`--c:${u.color}`} />
+          <text x={p.x + NODE_W / 2 - 12} y={p.y + 5} class="num" fill={u.color}>{t.id}</text>
+          <text
+            x={p.x + NODE_W / 2 - 36}
+            y={p.y + 5}
+            class="lbl"
+            {...(t.title.length * 6.6 > NODE_W - 58 ? { textLength: NODE_W - 58, lengthAdjust: 'spacingAndGlyphs' } : {})}
+          >{t.title}</text>
+          <circle cx={p.x - NODE_W / 2 + 12} cy={p.y} r="4" class="done-dot" fill={u.color} />
+        </g>
+      );
+      return t.ready ? (
+        <a href={lessonUrl(t)} class="node ready" data-id={t.id}>
+          <title>{`${t.title} — ${t.en}`}</title>
+          {inner}
+        </a>
+      ) : (
+        <g class="node soon" data-id={t.id} tabindex="0">
+          <title>{`${t.title} — ${t.en} (قريبًا)`}</title>
+          {inner}
+        </g>
+      );
+    })}
+  </svg>
+</div>
+
+<style>
+  .map-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background:
+      radial-gradient(1px 1px at 20% 30%, #ffffff55 50%, transparent 51%),
+      radial-gradient(1px 1px at 70% 80%, #ffffff44 50%, transparent 51%),
+      radial-gradient(1px 1px at 40% 60%, #ffffff33 50%, transparent 51%),
+      var(--bg-2);
+    background-size: 140px 140px, 190px 190px, 230px 230px, auto;
+  }
+  .map { display: block; margin-inline: auto; font-family: var(--font-body); }
+  .col { fill: var(--surface); opacity: 0.55; }
+  .col-title { font-family: var(--font-head); font-size: 15px; font-weight: 800; text-anchor: middle; }
+  .edges path { fill: none; stroke-width: 1.6; opacity: 0.22; transition: opacity 0.15s, stroke-width 0.15s; }
+  .edges path.hl { opacity: 0.95; stroke-width: 2.6; }
+  .node { cursor: pointer; outline: none; }
+  .node-bg { fill: var(--surface-2); stroke: var(--line); stroke-width: 1; transition: stroke 0.15s, fill 0.15s; }
+  .node.ready .node-bg { stroke: var(--c); stroke-width: 2; }
+  .node:hover .node-bg, .node:focus .node-bg, .node.hl .node-bg { stroke: var(--c); fill: var(--surface); }
+  .node.soon { opacity: 0.62; }
+  .node.soon:hover, .node.soon.hl { opacity: 1; }
+  .num { font-size: 14px; font-weight: 700; direction: ltr; text-anchor: end; }
+  .lbl { fill: var(--text); font-size: 13px; direction: rtl; text-anchor: start; }
+  .done-dot { opacity: 0; }
+  :global(.node.done) .done-dot { opacity: 1; }
+</style>
+
+<script>
+  const svg = document.querySelector<SVGSVGElement>('.map')!;
+  const paths = [...svg.querySelectorAll<SVGPathElement>('.edges path')];
+  const nodes = [...svg.querySelectorAll<SVGElement>('.node')];
+
+  const highlight = (id: string | null) => {
+    const linked = new Set<string>();
+    paths.forEach((p) => {
+      const on = id !== null && (p.dataset.from === id || p.dataset.to === id);
+      p.classList.toggle('hl', on);
+      if (on) { linked.add(p.dataset.from!); linked.add(p.dataset.to!); }
+    });
+    nodes.forEach((n) => n.classList.toggle('hl', linked.has(n.dataset.id!)));
+  };
+  nodes.forEach((n) => {
+    n.addEventListener('mouseenter', () => highlight(n.dataset.id!));
+    n.addEventListener('focus', () => highlight(n.dataset.id!));
+    n.addEventListener('mouseleave', () => highlight(null));
+    n.addEventListener('blur', () => highlight(null));
+  });
+
+  // إظهار الدروس المكتملة
+  try {
+    const done: number[] = JSON.parse(localStorage.getItem('done') || '[]');
+    done.forEach((id) => svg.querySelector(`.node[data-id="${id}"]`)?.classList.add('done'));
+  } catch (e) {}
+</script>

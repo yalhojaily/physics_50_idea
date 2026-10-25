@@ -1,0 +1,460 @@
+---
+// محاكاة دلو نيوتن: من يدور فعلًا، الدلو أم الكون؟
+---
+
+<figure class="sim" id="machSim">
+  <div class="stage">
+    <canvas class="scene" aria-label="دلو ماء معلّق تحت سماء مليئة بالنجوم"></canvas>
+    <p class="caption" aria-live="polite"></p>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <span class="lbl">من يدور؟</span>
+      <div class="seg" role="group">
+        <button class="btn" data-mode="bucket" aria-pressed="true">الدلو</button>
+        <button class="btn" data-mode="universe" aria-pressed="false">الكون (النجوم)</button>
+      </div>
+    </div>
+
+    <div class="row view-row" hidden>
+      <span class="lbl">بعين من؟</span>
+      <div class="seg" role="group">
+        <button class="btn" data-view="newton" aria-pressed="true">نيوتن: فضاء مطلق</button>
+        <button class="btn" data-view="mach" aria-pressed="false">ماخ: الدوران نسبي</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <span class="lbl">سرعة الدوران</span>
+      <input type="range" class="speed" min="2" max="14" step="0.5" value="9" />
+      <output class="speed-out ltr">9 rad/s</output>
+    </div>
+
+    <div class="row actions">
+      <button class="btn primary go">▶ ابدأ دوران الدلو</button>
+      <button class="btn reset">↺ من جديد</button>
+    </div>
+
+    <dl class="readouts">
+      <div><dt>الدلو بالنسبة للنجوم</dt><dd class="r-bucket ltr">0.0</dd></div>
+      <div><dt>الماء بالنسبة للدلو</dt><dd class="r-rel ltr">0.0</dd></div>
+      <div><dt>الماء بالنسبة للنجوم</dt><dd class="r-water ltr">0.0</dd></div>
+      <div class="hl"><dt>ارتفاع الحافة عن المركز</dt><dd class="r-dh ltr">0.0 cm</dd></div>
+    </dl>
+    <p class="unit-note">السرعات بوحدة rad/s، والدلو نصف قطره 15 سم. الحركة على الشاشة مبطّأة لتراها.</p>
+
+    <div class="chart-wrap">
+      <canvas class="chart" aria-label="منحنى دوران الدلو والماء مع الزمن"></canvas>
+      <div class="legend">
+        <span><i style="background:#f0a43a"></i>الدلو</span>
+        <span><i style="background:#4cc9f0"></i>الماء</span>
+        <span class="muted">آخر 15 ثانية</span>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<style>
+  .sim {
+    margin: 28px -16px; padding: 0;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden;
+  }
+  @media (min-width: 800px) { .sim { margin-inline: -80px; } }
+  .stage { position: relative; }
+  .scene { display: block; width: 100%; height: 400px; background: #070b18; }
+  .caption {
+    position: absolute; inset-inline: 12px; bottom: 10px; margin: 0;
+    background: #0b1020d9; color: #e8ecf8; border: 1px solid #2a3561;
+    border-radius: 10px; padding: 8px 14px; font-size: 15px; line-height: 1.7;
+  }
+  .controls { padding: 16px 18px 18px; display: grid; gap: 12px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+  .lbl { color: var(--muted); font-size: 15px; min-width: 96px; }
+  .seg { display: flex; flex-wrap: wrap; gap: 8px; }
+  .speed { flex: 1; min-width: 160px; accent-color: var(--accent); }
+  .speed-out { font-variant-numeric: tabular-nums; min-width: 70px; }
+  .actions { gap: 10px; }
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 4px 0 0; }
+  .readouts div { background: var(--surface-2); border-radius: 10px; padding: 8px 12px; }
+  .readouts .hl { outline: 1px solid var(--accent); }
+  dt { font-size: 13px; color: var(--muted); }
+  dd { margin: 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .unit-note { margin: 0; font-size: 13px; color: var(--muted); }
+  .chart-wrap { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; }
+  .chart { display: block; width: 100%; height: 120px; }
+  .legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); padding-top: 4px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-inline-end: 6px; vertical-align: middle; }
+  .legend .muted { margin-inline-start: auto; }
+</style>
+
+<script>
+  type Mode = 'bucket' | 'universe';
+  type View = 'newton' | 'mach';
+
+  const root = document.getElementById('machSim')!;
+  const scene = root.querySelector<HTMLCanvasElement>('.scene')!;
+  const chart = root.querySelector<HTMLCanvasElement>('.chart')!;
+  const caption = root.querySelector<HTMLElement>('.caption')!;
+  const speed = root.querySelector<HTMLInputElement>('.speed')!;
+  const speedOut = root.querySelector<HTMLOutputElement>('.speed-out')!;
+  const goBtn = root.querySelector<HTMLButtonElement>('.go')!;
+  const resetBtn = root.querySelector<HTMLButtonElement>('.reset')!;
+  const viewRow = root.querySelector<HTMLElement>('.view-row')!;
+  const out = {
+    bucket: root.querySelector('.r-bucket')!,
+    rel: root.querySelector('.r-rel')!,
+    water: root.querySelector('.r-water')!,
+    dh: root.querySelector('.r-dh')!,
+  };
+
+  // ثوابت فيزيائية
+  const G = 9.81;
+  const R_M = 0.15; // نصف قطر الدلو بالمتر
+  const TAU_WATER = 2.6; // زمن لحاق الماء بالدلو (لزوجة)
+  const TAU_STARS = 0.4;
+  const TAU_SHAPE = 0.5;
+  const VISUAL = 0.18; // تبطئ الحركة المعروضة
+
+  // الحالة
+  let mode: Mode = 'bucket';
+  let view: View = 'newton';
+  let on = false;
+  let wB = 0, wW = 0, wS = 0; // سرعات زاوية مطلقة: الدلو، الماء، النجوم
+  let wEff = 0; // السرعة التي تحدد شكل السطح
+  let thB = 0, thW = 0, thS = 0;
+  const history: { b: number; w: number }[] = [];
+  let histAcc = 0;
+
+  const stars = Array.from({ length: 220 }, () => ({
+    phi: Math.random() * Math.PI * 2,
+    y: Math.random(),
+    r: Math.random() * 1.4 + 0.3,
+    a: Math.random() * 0.6 + 0.4,
+  }));
+
+  // ——— أدوات الرسم ———
+  const fit = (c: HTMLCanvasElement) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const { width, height } = c.getBoundingClientRect();
+    if (c.width !== Math.round(width * dpr) || c.height !== Math.round(height * dpr)) {
+      c.width = Math.round(width * dpr);
+      c.height = Math.round(height * dpr);
+    }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w: width, h: height };
+  };
+
+  const target = () => Number(speed.value);
+
+  function step(dt: number) {
+    const W = target();
+    if (mode === 'bucket') {
+      wB = on ? W : 0; // الإيقاف يمسك الدلو فورًا
+      wS += (0 - wS) * (1 - Math.exp(-dt / TAU_STARS));
+      wW += (wB - wW) * (1 - Math.exp(-dt / TAU_WATER));
+    } else {
+      wB = 0;
+      wW += (0 - wW) * (1 - Math.exp(-dt / TAU_WATER));
+      const sTarget = on ? -W : 0;
+      wS += (sTarget - wS) * (1 - Math.exp(-dt / TAU_STARS));
+    }
+    // نيوتن: الشكل يحدده الدوران بالنسبة للفضاء المطلق. ماخ: بالنسبة للنجوم البعيدة.
+    const effTarget = mode === 'universe' && view === 'newton' ? wW : wW - wS;
+    wEff += (effTarget - wEff) * (1 - Math.exp(-dt / TAU_SHAPE));
+
+    thB += wB * VISUAL * dt;
+    thW += wW * VISUAL * dt;
+    thS += wS * VISUAL * dt;
+
+    histAcc += dt;
+    if (histAcc > 0.1) {
+      histAcc = 0;
+      history.push({ b: wB - wS, w: wW - wS });
+      if (history.length > 150) history.shift();
+    }
+  }
+
+  function drawScene() {
+    const { ctx, w, h } = fit(scene);
+    ctx.clearRect(0, 0, w, h);
+
+    // السماء
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#050816');
+    sky.addColorStop(1, '#141c3c');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    const cx = w / 2;
+    for (const s of stars) {
+      const a = s.phi + thS;
+      const c = Math.cos(a);
+      if (c <= 0) continue;
+      const x = cx + Math.sin(a) * (w / 2 + 30);
+      const y = s.y * (h - 60);
+      ctx.globalAlpha = s.a * (0.35 + 0.65 * c);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(x, y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // الدلو
+    const R = Math.min(w * 0.26, 150);
+    const ry = R * 0.24;
+    const bottom = h - 70;
+    const Hb = Math.min(190, h * 0.48);
+    const top = bottom - Hb;
+    const rimY = top;
+
+    // الحبل
+    ctx.strokeStyle = '#8b7a5c';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, 0);
+    ctx.lineTo(cx, rimY - 40);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx, rimY - 40);
+    ctx.lineTo(cx - R, rimY);
+    ctx.moveTo(cx, rimY - 40);
+    ctx.lineTo(cx + R, rimY);
+    ctx.stroke();
+    // التواء الحبل يدور مع الدلو
+    for (let i = 0; i < 6; i++) {
+      const y = 12 + i * ((rimY - 52) / 6);
+      const s = Math.sin(thB * 3 + i);
+      ctx.beginPath();
+      ctx.moveTo(cx - 3 * s, y);
+      ctx.lineTo(cx + 3 * s, y + 6);
+      ctx.stroke();
+    }
+
+    // الجدار الخلفي
+    ctx.fillStyle = '#2a3150';
+    ctx.beginPath();
+    ctx.ellipse(cx, rimY, R, ry, 0, Math.PI, 0);
+    ctx.lineTo(cx + R, bottom);
+    ctx.ellipse(cx, bottom, R, ry, 0, 0, Math.PI, true);
+    ctx.closePath();
+    ctx.fill();
+
+    // الماء
+    const level = bottom - Hb * 0.5;
+    const amp = Math.min((wEff * wEff * R_M * R_M) / (2 * G), 0.23); // متر
+    const px = (amp / 0.23) * Hb * 0.9; // ارتفاع الحافة عن المركز بالبكسل
+    const surf = (xr: number) => level + px * (0.5 - xr * xr); // xr من -1 إلى 1
+    // سطح الماء العلوي (الحافة الخلفية)
+    const edgeY = surf(1);
+    ctx.fillStyle = '#2f8fc9';
+    ctx.beginPath();
+    ctx.ellipse(cx, edgeY, R - 3, ry - 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // جسم الماء الأمامي
+    const body = ctx.createLinearGradient(0, edgeY, 0, bottom + ry);
+    body.addColorStop(0, '#4cc9f0');
+    body.addColorStop(1, '#1d5f9a');
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.moveTo(cx - R + 3, edgeY);
+    for (let i = 0; i <= 60; i++) {
+      const xr = -1 + (2 * i) / 60;
+      ctx.lineTo(cx + xr * (R - 3), surf(xr));
+    }
+    ctx.lineTo(cx + R - 3, bottom);
+    ctx.ellipse(cx, bottom, R - 3, ry - 2, 0, 0, Math.PI, false);
+    ctx.closePath();
+    ctx.globalAlpha = 0.92;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    // خط المقطع (القطع المكافئ)
+    ctx.strokeStyle = '#bdf0ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= 60; i++) {
+      const xr = -1 + (2 * i) / 60;
+      const x = cx + xr * (R - 3);
+      i ? ctx.lineTo(x, surf(xr)) : ctx.moveTo(x, surf(xr));
+    }
+    ctx.stroke();
+
+    // عوّامات تبيّن دوران الماء
+    for (let k = 0; k < 3; k++) {
+      const a = thW + (k * Math.PI * 2) / 3;
+      const rr = 0.62;
+      const xr = rr * Math.sin(a);
+      const depth = Math.cos(a);
+      const x = cx + xr * (R - 3);
+      const y = surf(rr) + depth * (ry - 4) * rr;
+      ctx.fillStyle = depth > 0 ? '#ffd166' : '#ffd16688';
+      ctx.beginPath();
+      ctx.arc(x, y, depth > 0 ? 6 : 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // الجدار الأمامي (شفاف قليلًا) وخطوطه
+    ctx.fillStyle = '#c9cfe41a';
+    ctx.strokeStyle = '#c9cfe4';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - R, rimY);
+    ctx.lineTo(cx - R, bottom);
+    ctx.ellipse(cx, bottom, R, ry, 0, Math.PI, 0, true);
+    ctx.lineTo(cx + R, rimY);
+    ctx.ellipse(cx, rimY, R, ry, 0, 0, Math.PI, false);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(cx, rimY, R, ry, 0, Math.PI, 0);
+    ctx.stroke();
+
+    // خطوط على الدلو تبيّن دورانه
+    for (let k = 0; k < 8; k++) {
+      const a = thB + (k * Math.PI) / 4;
+      if (Math.cos(a) <= 0) continue;
+      const x = cx + R * Math.sin(a);
+      const dy = ry * Math.cos(a);
+      ctx.strokeStyle = `rgba(240,164,58,${0.35 + 0.6 * Math.cos(a)})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x, rimY + dy);
+      ctx.lineTo(x, bottom + dy);
+      ctx.stroke();
+    }
+
+    // مسطرة الارتفاع
+    if (px > 4) {
+      const xL = cx + R + 16;
+      ctx.strokeStyle = '#f0a43a';
+      ctx.fillStyle = '#f0a43a';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(cx, surf(0));
+      ctx.lineTo(xL, surf(0));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(xL, surf(0));
+      ctx.lineTo(xL, edgeY);
+      ctx.stroke();
+      ctx.font = '600 13px system-ui';
+      ctx.textAlign = 'left';
+      ctx.fillText('Δh', xL + 6, (surf(0) + edgeY) / 2 + 4);
+    }
+  }
+
+  function drawChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const max = 15;
+    const y = (v: number) => h - 8 - (Math.max(-1, Math.min(max, v)) / max) * (h - 16);
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, y(0));
+    ctx.lineTo(w, y(0));
+    ctx.stroke();
+    const series = (key: 'b' | 'w', color: string) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      history.forEach((p, i) => {
+        // محور الزمن علمي: من اليسار لليمين
+        const x = (i / 149) * w;
+        i ? ctx.lineTo(x, y(p[key])) : ctx.moveTo(x, y(p[key]));
+      });
+      ctx.stroke();
+    };
+    series('b', '#f0a43a');
+    series('w', '#4cc9f0');
+  }
+
+  function updateText() {
+    const f = (v: number) => (Math.abs(v) < 0.05 ? '0.0' : v.toFixed(1));
+    out.bucket.textContent = f(wB - wS);
+    out.rel.textContent = f(wW - wB);
+    out.water.textContent = f(wW - wS);
+    const dh = ((wEff * wEff * R_M * R_M) / (2 * G)) * 100;
+    out.dh.textContent = `${dh.toFixed(1)} cm`;
+
+    const W = target();
+    let t: string;
+    if (mode === 'bucket') {
+      const rel = Math.abs(wB - wW);
+      if (!on && Math.abs(wW) < 0.15) t = 'الدلو والماء ساكنان، والسطح مستوٍ. اضغط «ابدأ» وراقب الماء.';
+      else if (on && rel > 0.35 * W) t = 'المرحلة 1: الدلو يدور والماء لم يلحق به بعد. الحركة النسبية بينهما كبيرة، ومع ذلك السطح شبه مستوٍ!';
+      else if (on) t = 'المرحلة 2: الماء يدور مع الدلو فلا حركة بينهما، ومع ذلك السطح مقعّر. إذن التقعّر لا يأتي من الدوران بالنسبة للدلو. جرّب «أوقف الدلو».';
+      else t = 'المرحلة 3: أمسكتَ الدلو، والماء ما زال يدور داخله. السطح يبقى مقعّرًا حتى يتباطأ الماء. الدوران بالنسبة لماذا إذن؟';
+    } else if (!on) {
+      t = 'الدلو ساكن هنا. اضغط «أدر الكون» لتدور النجوم كلها حوله بدل أن يدور هو.';
+    } else if (view === 'newton') {
+      t = 'عند نيوتن: الدلو لا يدور بالنسبة للفضاء المطلق، فلا يهمّ أن النجوم تدور. السطح يبقى مستويًا.';
+    } else {
+      t = 'عند ماخ: لا يوجد إلا الدوران النسبي. دوران الكون كله حول الدلو يكافئ دوران الدلو داخل الكون، فيتقعّر السطح.';
+    }
+    if (caption.textContent !== t) caption.textContent = t;
+  }
+
+  function updateButtons() {
+    root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+      b.setAttribute('aria-pressed', String(b.dataset.mode === mode)),
+    );
+    root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) =>
+      b.setAttribute('aria-pressed', String(b.dataset.view === view)),
+    );
+    viewRow.hidden = mode !== 'universe';
+    if (mode === 'bucket') goBtn.textContent = on ? '■ أوقف الدلو' : '▶ ابدأ دوران الدلو';
+    else goBtn.textContent = on ? '■ أوقف الكون' : '▶ أدر الكون';
+  }
+
+  // ——— التفاعل ———
+  root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (mode === b.dataset.mode) return;
+      mode = b.dataset.mode as Mode;
+      on = false;
+      updateButtons();
+    }),
+  );
+  root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) =>
+    b.addEventListener('click', () => {
+      view = b.dataset.view as View;
+      updateButtons();
+    }),
+  );
+  goBtn.addEventListener('click', () => {
+    on = !on;
+    updateButtons();
+  });
+  resetBtn.addEventListener('click', () => {
+    on = false;
+    wB = wW = wS = wEff = 0;
+    history.length = 0;
+    updateButtons();
+  });
+  speed.addEventListener('input', () => (speedOut.textContent = `${speed.value} rad/s`));
+
+  // ——— الحلقة ———
+  let visible = true;
+  new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
+  let last = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt);
+    if (visible) {
+      drawScene();
+      drawChart();
+      updateText();
+    }
+    requestAnimationFrame(frame);
+  }
+  updateButtons();
+  requestAnimationFrame(frame);
+</script>

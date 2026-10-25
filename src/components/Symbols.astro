@@ -1,0 +1,59 @@
+---
+// شرح رموز المعادلة: اضغط على الرمز ليظهر معناه
+import katex from 'katex';
+
+interface Props {
+  items: { tex: string; meaning: string }[];
+}
+const { items } = Astro.props;
+const render = (tex: string) => katex.renderToString(tex, { throwOnError: false });
+---
+
+<div class="symbols">
+  <p class="hint">اضغط على أي رمز لتعرف معناه:</p>
+  <div class="chips">
+    {items.map((s, i) => (
+      <button class="chip" data-i={i} aria-expanded="false" set:html={render(s.tex)} />
+    ))}
+  </div>
+  {items.map((s, i) => (
+    <p class="meaning" data-i={i} hidden>
+      <span class="sym ltr" set:html={render(s.tex)} /> {s.meaning}
+    </p>
+  ))}
+</div>
+
+<style>
+  .symbols { margin: 8px 0 20px; }
+  .hint { margin: 0 0 8px; font-size: 15px; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; direction: ltr; justify-content: flex-end; }
+  .chip {
+    min-width: 44px; height: 40px; padding: 0 12px; cursor: pointer;
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px; font-size: 15px;
+  }
+  .chip[aria-expanded='true'] { border-color: var(--c, var(--accent)); background: var(--surface); }
+  .meaning {
+    margin: 10px 0 0; padding: 10px 14px; border-radius: 10px;
+    background: var(--surface); border-inline-start: 3px solid var(--c, var(--accent)); font-size: 16px;
+  }
+  .sym { display: inline-block; margin-inline-end: 6px; }
+</style>
+
+<script>
+  document.querySelectorAll<HTMLElement>('.symbols').forEach((box) => {
+    const chips = [...box.querySelectorAll<HTMLButtonElement>('.chip')];
+    const meanings = [...box.querySelectorAll<HTMLElement>('.meaning')];
+    chips.forEach((c) =>
+      c.addEventListener('click', () => {
+        const open = c.getAttribute('aria-expanded') !== 'true';
+        chips.forEach((x) => x.setAttribute('aria-expanded', 'false'));
+        meanings.forEach((m) => (m.hidden = true));
+        if (open) {
+          c.setAttribute('aria-expanded', 'true');
+          meanings.find((m) => m.dataset.i === c.dataset.i)!.hidden = false;
+        }
+      }),
+    );
+  });
+</script>

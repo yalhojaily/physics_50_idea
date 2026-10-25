@@ -1,0 +1,87 @@
+---
+import Base from '../layouts/Base.astro';
+import ConceptMap from '../components/ConceptMap.astro';
+import { topics, units, lessonUrl } from '../data/topics';
+
+const readyCount = topics.filter((t) => t.ready).length;
+---
+
+<Base title="50 فكرة في الفيزياء">
+  <main>
+    <section class="hero wrap">
+      <p class="kicker">رحلة في الفيزياء من نيوتن إلى الانفجار العظيم</p>
+      <h1>خمسون فكرة غيّرت فهمنا للكون</h1>
+      <p class="lead">
+        كل فكرة في درس مستقل: حدس يقرّبها، وتجربة تفاعلية تحرّك فيها المتغيرات بنفسك، ثم المعادلة وقصتها.
+        الخريطة تبيّن ما تحتاجه قبل كل فكرة وإلى أين تقودك.
+      </p>
+      <div class="stats">
+        <div><strong id="doneCount">0</strong> / 50 <span>أنهيتها</span></div>
+        <div><strong>{readyCount}</strong> <span>درس منشور حتى الآن</span></div>
+        <a class="btn primary" href={lessonUrl(topics[0])}>ابدأ بالدرس الأول ←</a>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <div class="map-head">
+        <h2>خريطة المفاهيم</h2>
+        <p>مرّر المؤشر على أي فكرة لترى ما تعتمد عليه وما يُبنى عليها. الإطار الملوّن يعني أن الدرس جاهز.</p>
+      </div>
+      <ConceptMap />
+    </section>
+
+    <section class="wrap units">
+      <h2>المواضيع حسب الوحدة</h2>
+      <div class="grid">
+        {units.map((u) => (
+          <div class="unit" style={`--c:${u.color}`}>
+            <h3>{u.title}</h3>
+            <ol>
+              {topics.filter((t) => t.unit === u.id).map((t) => (
+                <li data-id={t.id}>
+                  <span class="n">{t.id}</span>
+                  {t.ready ? <a href={lessonUrl(t)}>{t.title}</a> : <span class="soon">{t.title}</span>}
+                  {!t.ready && <em>قريبًا</em>}
+                </li>
+              ))}
+            </ol>
+          </div>
+        ))}
+      </div>
+    </section>
+  </main>
+</Base>
+
+<script>
+  try {
+    const done: number[] = JSON.parse(localStorage.getItem('done') || '[]');
+    document.getElementById('doneCount')!.textContent = String(done.length);
+    done.forEach((id) => document.querySelector(`.unit li[data-id="${id}"]`)?.classList.add('done'));
+  } catch (e) {}
+</script>
+
+<style>
+  .hero { padding: 56px 16px 32px; }
+  .kicker { color: var(--accent); font-weight: 600; margin: 0 0 8px; }
+  h1 { font-size: clamp(30px, 5vw, 52px); margin: 0 0 16px; font-weight: 800; }
+  .lead { max-width: 680px; color: var(--muted); font-size: 19px; margin: 0 0 28px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: center; }
+  .stats div { color: var(--muted); }
+  .stats strong { color: var(--text); font-size: 26px; font-family: var(--font-head); }
+  .map-head { margin: 32px 0 16px; }
+  .map-head h2 { margin: 0 0 4px; }
+  .map-head p { margin: 0; color: var(--muted); font-size: 16px; }
+  .units h2 { margin-top: 56px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .unit {
+    background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--c);
+    border-radius: var(--radius); padding: 16px 18px;
+  }
+  .unit h3 { margin: 0 0 8px; color: var(--c); font-size: 18px; }
+  .unit ol { list-style: none; margin: 0; padding: 0; }
+  .unit li { display: flex; gap: 10px; align-items: baseline; font-size: 16px; padding: 3px 0; }
+  .unit .n { color: var(--c); font-weight: 700; min-width: 22px; }
+  .unit .soon { color: var(--muted); }
+  .unit em { font-style: normal; font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 0 8px; margin-inline-start: auto; }
+  .unit li.done::after { content: '✓'; color: var(--good); margin-inline-start: auto; }
+</style>

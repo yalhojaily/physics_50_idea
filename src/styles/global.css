@@ -1,0 +1,71 @@
+:root {
+  --bg: #0b1020;
+  --bg-2: #111832;
+  --surface: #151d3a;
+  --surface-2: #1c2648;
+  --line: #2a3561;
+  --text: #e8ecf8;
+  --muted: #9aa5c8;
+  --accent: #f0a43a;
+  --good: #5ad19a;
+  --bad: #ef6a4c;
+  --radius: 14px;
+  --font-body: 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  --font-head: 'Noto Kufi Arabic', 'IBM Plex Sans Arabic', sans-serif;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bg: #f6f3ec;
+    --bg-2: #efe9dd;
+    --surface: #ffffff;
+    --surface-2: #f3eee3;
+    --line: #ddd4c2;
+    --text: #1b1f2e;
+    --muted: #5e6578;
+    --accent: #c8740d;
+    color-scheme: light;
+  }
+}
+:root[data-theme='light'] {
+  --bg: #f6f3ec;
+  --bg-2: #efe9dd;
+  --surface: #ffffff;
+  --surface-2: #f3eee3;
+  --line: #ddd4c2;
+  --text: #1b1f2e;
+  --muted: #5e6578;
+  --accent: #c8740d;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 18px;
+  line-height: 1.85;
+}
+h1, h2, h3 { font-family: var(--font-head); line-height: 1.4; }
+a { color: var(--accent); }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 16px; }
+.prose { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+
+/* المعادلات دائمًا من اليسار لليمين */
+.katex-display, .ltr { direction: ltr; unicode-bidi: isolate; }
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 6px 0; }
+.katex { font-size: 1.1em; }
+
+.btn {
+  font: inherit; font-size: 15px; font-weight: 600;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
+  padding: 8px 16px; border-radius: 999px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1205; }
+.btn[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: #1a1205; }
