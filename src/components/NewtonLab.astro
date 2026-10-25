@@ -179,7 +179,7 @@
   }
 
   // عرض الصندوق بالمتر يكبر مع الكتلة
-  const boxW = (m: number) => (law === 3 ? 0.35 + Math.sqrt(m) * 0.06 : 0.5 + Math.sqrt(m) * 0.18);
+  const boxW = (m: number) => (law === 3 ? 0.35 + Math.sqrt(m) * 0.06 : 0.6 + Math.sqrt(m) * 0.24);
 
   function act() {
     if (law === 1) {
@@ -249,6 +249,7 @@
     if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
     const ctx = c.getContext('2d')!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.direction = 'ltr'; // الأرقام والوحدات في الرسم من اليسار لليمين
     return { ctx, w: width, h: height };
   };
 
