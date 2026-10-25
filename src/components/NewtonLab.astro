@@ -272,7 +272,9 @@
     if (label) {
       ctx.font = '600 13px system-ui';
       ctx.textAlign = 'center';
-      ctx.fillText(label, (x1 + x2) / 2, y - 10);
+      const cw = ctx.canvas.clientWidth;
+      const lx = Math.max(55, Math.min(cw - 55, (x1 + x2) / 2));
+      ctx.fillText(label, lx, y - 10);
     }
   }
 
@@ -364,7 +366,7 @@
         ctx.fill();
       }
       ctx.fillStyle = '#12121a';
-      ctx.font = '700 14px system-ui';
+      ctx.font = law === 3 ? '700 11px system-ui' : '700 14px system-ui';
       ctx.textAlign = 'center';
       ctx.fillText(b.label, x, ground - (law === 3 ? bh * 0.35 : bh / 2 - 5));
 
