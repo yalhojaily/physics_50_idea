@@ -1,0 +1,532 @@
+---
+// مختبر قوانين نيوتن الثلاثة: القصور، F = ma، الفعل ورد الفعل
+---
+
+<figure class="sim" id="newtonLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-law="1" aria-selected="true">القانون الأول<small>القصور الذاتي</small></button>
+    <button class="tab" data-law="2" aria-selected="false">القانون الثاني<small>F = ma</small></button>
+    <button class="tab" data-law="3" aria-selected="false">القانون الثالث<small>الفعل ورد الفعل</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="مسار أفقي عليه أجسام تتحرك تحت تأثير قوى"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <!-- القانون الأول -->
+    <div class="pane" data-pane="1">
+      <div class="row">
+        <span class="lbl">الاحتكاك μ</span>
+        <input type="range" class="mu" min="0" max="0.4" step="0.02" value="0.15" />
+        <output class="mu-out ltr">0.15</output>
+      </div>
+      <div class="presets">
+        <button class="btn" data-mu="0.4">عشب</button>
+        <button class="btn" data-mu="0.15">أرضية خشب</button>
+        <button class="btn" data-mu="0.02">جليد</button>
+        <button class="btn" data-mu="0">الفضاء (بلا احتكاك)</button>
+      </div>
+      <div class="row actions">
+        <button class="btn primary act">▶ اركل الصندوق</button>
+        <button class="btn reset">↺ من جديد</button>
+      </div>
+    </div>
+
+    <!-- القانون الثاني -->
+    <div class="pane" data-pane="2" hidden>
+      <div class="row">
+        <span class="lbl">القوة F</span>
+        <input type="range" class="force" min="2" max="20" step="1" value="10" />
+        <output class="force-out ltr">10 N</output>
+      </div>
+      <div class="row">
+        <span class="lbl">الكتلة m</span>
+        <input type="range" class="mass" min="1" max="10" step="0.5" value="2" />
+        <output class="mass-out ltr">2 kg</output>
+      </div>
+      <div class="row actions">
+        <button class="btn primary act">▶ شغّل القوة 5 ثوانٍ</button>
+        <button class="btn reset">↺ امسح المنحنيات</button>
+      </div>
+    </div>
+
+    <!-- القانون الثالث -->
+    <div class="pane" data-pane="3" hidden>
+      <div class="row">
+        <span class="lbl">كتلة المتزلج الأيمن</span>
+        <input type="range" class="m1" min="20" max="120" step="5" value="40" />
+        <output class="m1-out ltr">40 kg</output>
+      </div>
+      <div class="row">
+        <span class="lbl">كتلة المتزلج الأيسر</span>
+        <input type="range" class="m2" min="20" max="120" step="5" value="80" />
+        <output class="m2-out ltr">80 kg</output>
+      </div>
+      <div class="row actions">
+        <button class="btn primary act">▶ يتدافعان</button>
+        <button class="btn reset">↺ من جديد</button>
+      </div>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap">
+      <canvas class="chart" aria-label="منحنى السرعة مع الزمن"></canvas>
+      <div class="legend"></div>
+    </div>
+  </div>
+</figure>
+
+<style>
+  .sim {
+    margin: 28px -16px; padding: 0;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden;
+  }
+  @media (min-width: 800px) { .sim { margin-inline: -80px; } }
+  .tabs { display: grid; grid-template-columns: repeat(3, 1fr); background: #0b1020; }
+  .tab {
+    font: inherit; font-size: 15px; font-weight: 700; color: #9aa5c8; cursor: pointer;
+    background: none; border: 0; border-bottom: 3px solid transparent; padding: 10px 6px 8px;
+  }
+  .tab small { display: block; font-size: 12px; font-weight: 500; direction: rtl; }
+  .tab[aria-selected='true'] { color: #fff; border-bottom-color: var(--c, var(--accent)); }
+  .scene { display: block; width: 100%; height: 300px; background: #0e1530; }
+  .caption {
+    margin: 0; min-height: 3.6em; background: #0b1020; color: #e8ecf8;
+    border-top: 1px solid #2a3561; padding: 10px 18px; font-size: 16px; line-height: 1.7;
+  }
+  .controls { padding: 16px 18px 18px; display: grid; gap: 12px; }
+  .pane { display: grid; gap: 12px; }
+  .pane[hidden] { display: none; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+  .lbl { color: var(--muted); font-size: 15px; min-width: 130px; }
+  .row input[type='range'] { flex: 1; min-width: 150px; accent-color: var(--accent); }
+  output { font-variant-numeric: tabular-nums; min-width: 60px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; }
+  .presets .btn { font-size: 14px; padding: 5px 12px; }
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 0; }
+  .readouts :global(div) { background: var(--surface-2); border-radius: 10px; padding: 8px 12px; }
+  .readouts :global(div.hl) { outline: 1px solid var(--accent); }
+  .readouts :global(dt) { font-size: 13px; color: var(--muted); }
+  .readouts :global(dd) { margin: 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; direction: ltr; text-align: right; }
+  .chart-wrap { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; }
+  .chart { display: block; width: 100%; height: 150px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--muted); padding-top: 4px; }
+  .legend :global(i) { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-inline-end: 6px; vertical-align: middle; }
+</style>
+
+<script>
+  type Law = 1 | 2 | 3;
+  interface Body { x: number; v: number; m: number; f: number; color: string; label: string }
+  interface Run { pts: { t: number; v: number }[]; color: string; label: string }
+
+  const root = document.getElementById('newtonLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const caption = $<HTMLElement>('.caption');
+  const readouts = $<HTMLElement>('.readouts');
+  const legend = $<HTMLElement>('.legend');
+
+  const G = 9.81;
+  const T_MAX = 8; // نافذة المنحنى بالثواني
+  const PUSH_T = 0.3; // مدة التدافع في القانون الثالث
+  const PUSH_F = 200; // نيوتن
+  const KICK_V = 4; // م/ث بعد الركلة
+
+  const AMBER = '#f0a43a', CYAN = '#4cc9f0', PINK = '#f27fb8';
+  const GHOSTS = ['#9b8cff', '#5ad19a', '#ef6a4c'];
+
+  let law: Law = 1;
+  let bodies: Body[] = [];
+  let t = 0;
+  let running = false;
+  let run: Run[] = [];
+  let ghosts: Run[] = []; // تشغيلات سابقة في القانون الثاني
+  let strobe: number[][] = []; // مواقع كل جسم كل 0.5 ث
+  let strobeAcc = 0, sampleAcc = 0;
+  let camX = 0;
+
+  const num = (s: string) => Number($<HTMLInputElement>(s).value);
+
+  function setup() {
+    t = 0;
+    running = false;
+    strobe = [];
+    strobeAcc = sampleAcc = 0;
+    if (law === 1) {
+      bodies = [{ x: 0, v: 0, m: 2, f: 0, color: AMBER, label: '2 kg' }];
+      run = [{ pts: [], color: CYAN, label: 'السرعة' }];
+    } else if (law === 2) {
+      const m = num('.mass');
+      bodies = [{ x: 0, v: 0, m, f: 0, color: AMBER, label: `${m} kg` }];
+      run = [{ pts: [], color: CYAN, label: `F = ${num('.force')} N، m = ${m} kg` }];
+    } else {
+      const m1 = num('.m1'), m2 = num('.m2');
+      const w1 = boxW(m1), w2 = boxW(m2);
+      bodies = [
+        { x: w1 / 2, v: 0, m: m1, f: 0, color: CYAN, label: `${m1} kg` },
+        { x: -w2 / 2, v: 0, m: m2, f: 0, color: PINK, label: `${m2} kg` },
+      ];
+      run = [
+        { pts: [], color: CYAN, label: 'المتزلج الأيمن' },
+        { pts: [], color: PINK, label: 'المتزلج الأيسر' },
+      ];
+    }
+    camX = 0;
+    renderLegend();
+  }
+
+  // عرض الصندوق بالمتر يكبر مع الكتلة
+  const boxW = (m: number) => (law === 3 ? 0.35 + Math.sqrt(m) * 0.06 : 0.5 + Math.sqrt(m) * 0.18);
+
+  function act() {
+    if (law === 1) {
+      setup();
+      bodies[0].v = KICK_V;
+      running = true;
+    } else if (law === 2) {
+      if (run[0].pts.length > 2) {
+        ghosts.unshift({ ...run[0], color: GHOSTS[ghosts.length % GHOSTS.length] });
+        ghosts = ghosts.slice(0, 3);
+      }
+      setup();
+      running = true;
+    } else {
+      setup();
+      running = true;
+    }
+  }
+
+  function step(dt: number) {
+    if (!running) return;
+    t += dt;
+    if (law === 1) {
+      const b = bodies[0];
+      const mu = num('.mu');
+      const dec = mu * G;
+      if (b.v > 0) {
+        b.f = -mu * b.m * G;
+        b.v = Math.max(0, b.v - dec * dt);
+      } else b.f = 0;
+      b.x += b.v * dt;
+      if (b.v === 0 && t > 0.2) running = false;
+    } else if (law === 2) {
+      const b = bodies[0];
+      b.f = t <= 5 ? num('.force') : 0;
+      b.v += (b.f / b.m) * dt;
+      b.x += b.v * dt;
+    } else {
+      const pushing = t <= PUSH_T;
+      bodies[0].f = pushing ? PUSH_F : 0;
+      bodies[1].f = pushing ? -PUSH_F : 0;
+      for (const b of bodies) {
+        b.v += (b.f / b.m) * dt;
+        b.x += b.v * dt;
+      }
+    }
+    if (t >= T_MAX + 0.5 && law !== 1) running = false;
+
+    sampleAcc += dt;
+    if (sampleAcc >= 0.05 && t <= T_MAX) {
+      sampleAcc = 0;
+      bodies.forEach((b, i) => run[i].pts.push({ t, v: b.v }));
+    }
+    strobeAcc += dt;
+    if (strobeAcc >= 0.5) {
+      strobeAcc = 0;
+      strobe.push(bodies.map((b) => b.x));
+      if (strobe.length > 40) strobe.shift();
+    }
+  }
+
+  // ——— الرسم ———
+  const fit = (c: HTMLCanvasElement) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const { width, height } = c.getBoundingClientRect();
+    const W = Math.round(width * dpr), H = Math.round(height * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w: width, h: height };
+  };
+
+  function arrow(ctx: CanvasRenderingContext2D, x1: number, y: number, x2: number, color: string, label?: string) {
+    if (Math.abs(x2 - x1) < 3) return;
+    const dir = Math.sign(x2 - x1);
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(x1, y);
+    ctx.lineTo(x2 - dir * 10, y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x2, y);
+    ctx.lineTo(x2 - dir * 13, y - 8);
+    ctx.lineTo(x2 - dir * 13, y + 8);
+    ctx.closePath();
+    ctx.fill();
+    if (label) {
+      ctx.font = '600 13px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText(label, (x1 + x2) / 2, y - 10);
+    }
+  }
+
+  function drawScene() {
+    const { ctx, w, h } = fit(scene);
+    ctx.clearRect(0, 0, w, h);
+    const ground = h - 64;
+    const ppm = law === 3 ? w / 14 : Math.max(48, w / 12); // بكسل لكل متر
+
+    // الكاميرا تتبع الجسم في القانونين الأول والثاني
+    let anchor = w / 2;
+    if (law !== 3) {
+      anchor = w * 0.3;
+      const target = bodies[0].x;
+      camX += (target - camX) * 0.2;
+    }
+    const sx = (x: number) => anchor + (x - camX) * ppm;
+
+    // الأرضية: لونها يعكس نوع السطح في القانون الأول
+    let groundColor = '#2a3561';
+    if (law === 1) {
+      const mu = num('.mu');
+      groundColor = mu >= 0.3 ? '#2f6b3a' : mu >= 0.1 ? '#6b4a2b' : mu > 0 ? '#6fa8c9' : '#1b2246';
+    }
+    ctx.fillStyle = groundColor;
+    ctx.fillRect(0, ground, w, h - ground);
+    if (law === 1 && num('.mu') === 0) {
+      // الفضاء: نجوم بدل أرض
+      ctx.fillStyle = '#ffffff55';
+      for (let i = 0; i < 60; i++) {
+        const xx = (((i * 97.3 - camX * ppm * 0.3) % w) + w) % w;
+        ctx.fillRect(xx, ground + 8 + ((i * 37) % (h - ground - 12)), 1.5, 1.5);
+      }
+    }
+    // علامات كل متر
+    ctx.strokeStyle = '#ffffff40';
+    ctx.fillStyle = '#ffffff80';
+    ctx.font = '12px system-ui';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 1;
+    const first = Math.floor(camX - anchor / ppm) - 1;
+    const last = Math.ceil(camX + (w - anchor) / ppm) + 1;
+    for (let m = first; m <= last; m++) {
+      const x = sx(m);
+      ctx.beginPath();
+      ctx.moveTo(x, ground);
+      ctx.lineTo(x, ground + (m % 5 === 0 ? 14 : 7));
+      ctx.stroke();
+      if (m % (law === 3 ? 1 : 5) === 0) ctx.fillText(`${m} m`, x, ground + 30);
+    }
+    ctx.strokeStyle = '#c9cfe4';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, ground);
+    ctx.lineTo(w, ground);
+    ctx.stroke();
+
+    // آثار كل نصف ثانية: تباعدها يكشف التسارع
+    strobe.forEach((xs, k) => {
+      xs.forEach((x, i) => {
+        const bw = boxW(bodies[i].m) * ppm;
+        const bh = bw * (law === 3 ? 1.9 : 0.8);
+        ctx.strokeStyle = bodies[i].color;
+        ctx.globalAlpha = 0.12 + (0.25 * k) / strobe.length;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx(x) - bw / 2, ground - bh, bw, bh);
+      });
+    });
+    ctx.globalAlpha = 1;
+
+    // الأجسام
+    const fScale = law === 3 ? 0.35 : 6;
+    bodies.forEach((b) => {
+      const bw = boxW(b.m) * ppm;
+      const bh = bw * (law === 3 ? 1.9 : 0.8);
+      const x = sx(b.x);
+      ctx.fillStyle = b.color;
+      if (law === 3) {
+        // متزلج مبسّط: جسم ورأس
+        ctx.beginPath();
+        ctx.roundRect(x - bw / 2, ground - bh * 0.78, bw, bh * 0.78, 8);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, ground - bh * 0.78 - bw * 0.32, bw * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.roundRect(x - bw / 2, ground - bh, bw, bh, 6);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#12121a';
+      ctx.font = '700 14px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText(b.label, x, ground - (law === 3 ? bh * 0.35 : bh / 2 - 5));
+
+      // سهم القوة فوق الجسم، وسهم السرعة تحته
+      const top = ground - bh - (law === 3 ? bw * 0.7 : 0) - 26;
+      if (b.f !== 0) {
+        const len = Math.max(-w * 0.3, Math.min(w * 0.3, b.f * fScale));
+        arrow(ctx, x, top, x + len, AMBER, `F = ${Math.abs(b.f).toFixed(0)} N`);
+      }
+      if (Math.abs(b.v) > 0.02) {
+        const len = Math.max(-w * 0.3, Math.min(w * 0.3, b.v * 22));
+        arrow(ctx, x, ground - bh - (law === 3 ? bw * 0.7 : 0) - 62, x + len, '#bdf0ff', `v = ${Math.abs(b.v).toFixed(1)} m/s`);
+      }
+    });
+  }
+
+  function drawChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const muted = css.getPropertyValue('--muted');
+    const all = [...run, ...ghosts];
+    let vMax = 4, vMin = 0;
+    for (const r of all) for (const p of r.pts) { vMax = Math.max(vMax, p.v); vMin = Math.min(vMin, p.v); }
+    vMax = Math.ceil(vMax);
+    vMin = Math.floor(vMin);
+    const L = 34, B = 18;
+    const X = (tt: number) => L + (tt / T_MAX) * (w - L - 6);
+    const Y = (v: number) => 6 + ((vMax - v) / (vMax - vMin)) * (h - 6 - B);
+
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'right';
+    const stepV = Math.max(1, Math.ceil((vMax - vMin) / 4));
+    for (let v = vMin; v <= vMax; v += stepV) {
+      ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(w - 6, Y(v)); ctx.stroke();
+      ctx.fillText(String(v), L - 6, Y(v) + 4);
+    }
+    ctx.textAlign = 'center';
+    for (let s = 0; s <= T_MAX; s += 2) ctx.fillText(`${s}s`, X(s), h - 3);
+    ctx.save();
+    ctx.translate(10, h / 2 - 8);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('v (m/s)', 0, 0);
+    ctx.restore();
+
+    const line = (r: Run, alpha: number, width: number) => {
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = r.color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      r.pts.forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(p.v)) : ctx.moveTo(X(p.t), Y(p.v))));
+      ctx.stroke();
+    };
+    ghosts.forEach((g) => line(g, 0.7, 1.8));
+    run.forEach((r) => line(r, 1, 2.6));
+    ctx.globalAlpha = 1;
+  }
+
+  function renderLegend() {
+    legend.innerHTML = [...run, ...ghosts]
+      .map((r) => `<span><i style="background:${r.color}"></i>${r.label}</span>`)
+      .join('');
+  }
+
+  // ——— النصوص ———
+  let lastReadout = '';
+  function updateText() {
+    const f1 = (v: number) => (Math.abs(v) < 0.005 ? '0.0' : v.toFixed(1));
+    let cells: [string, string, boolean?][] = [];
+    let cap = '';
+    if (law === 1) {
+      const b = bodies[0];
+      const mu = num('.mu');
+      cells = [
+        ['السرعة', `${f1(b.v)} m/s`],
+        ['المسافة المقطوعة', `${f1(b.x)} m`],
+        ['قوة الاحتكاك', `${(mu * b.m * G).toFixed(1)} N`, true],
+      ];
+      if (!running && b.x === 0) cap = 'اختر سطحًا ثم اركل الصندوق. الركلة تعطيه سرعة 4 م/ث ثم تختفي. ماذا يحدث بعدها؟';
+      else if (running && mu === 0) cap = 'لا احتكاك ولا أي قوة: الصندوق يحافظ على سرعته إلى الأبد. لاحظ أن الآثار متباعدة بمسافات متساوية تمامًا.';
+      else if (running) cap = 'القوة الوحيدة الآن هي الاحتكاك، وهي عكس الحركة، فتُبطئ الصندوق. الحركة لا «تنفد» من تلقاء نفسها: هناك قوة توقفها.';
+      else cap = `توقف الصندوق بعد ${f1(b.x)} م. جرّب سطحًا أنعم: كلما قلّ الاحتكاك ذهب أبعد. ماذا لو لم يوجد احتكاك أصلًا؟`;
+    } else if (law === 2) {
+      const b = bodies[0];
+      const F = num('.force');
+      cells = [
+        ['التسارع a = F/m', `${(F / b.m).toFixed(2)} m/s²`, true],
+        ['السرعة', `${f1(b.v)} m/s`],
+        ['الزمن', `${Math.min(t, T_MAX).toFixed(1)} s`],
+      ];
+      if (!running && t === 0) cap = 'اختر قوة وكتلة ثم شغّل. القوة تعمل 5 ثوانٍ ثم تتوقف. راقب ميل الخط في المنحنى: إنه التسارع.';
+      else if (t <= 5) cap = 'القوة ثابتة، فالسرعة تزيد بالمقدار نفسه كل ثانية. الآثار تتباعد أكثر فأكثر، والمنحنى خط مستقيم مائل.';
+      else cap = 'توقفت القوة. لم يعد هناك تسارع، فبقيت السرعة ثابتة: هذا هو القانون الأول مرة أخرى. غيّر الكتلة أو القوة وشغّل لتقارن المنحنيات.';
+    } else {
+      const [a, c] = bodies;
+      cells = [
+        ['القوة على الأيمن', `${Math.abs(a.f).toFixed(0)} N`],
+        ['القوة على الأيسر', `${Math.abs(c.f).toFixed(0)} N`],
+        ['سرعة الأيمن', `${f1(a.v)} m/s`],
+        ['سرعة الأيسر', `${f1(c.v)} m/s`],
+        ['الزخم الكلي m₁v₁ + m₂v₂', `${f1(a.m * a.v + c.m * c.v)} kg·m/s`, true],
+      ];
+      if (!running && t === 0) cap = 'متزلجان ساكنان على الجليد. حين يدفع أحدهما الآخر، من يتحرك؟ ومن يتحرك أسرع؟';
+      else if (t <= PUSH_T) cap = 'أثناء الدفع: القوتان متساويتان تمامًا ومتعاكستان، أيًّا كان الأثقل.';
+      else cap = `القوتان كانتا متساويتين، لكن الأخف تسارع أكثر. نسبة السرعتين ${(Math.abs(a.v) / Math.max(1e-9, Math.abs(c.v))).toFixed(2)} تساوي عكس نسبة الكتلتين. والزخم الكلي بقي صفرًا.`;
+    }
+    const html = cells
+      .map(([k, v, hl]) => `<div${hl ? ' class="hl"' : ''}><dt>${k}</dt><dd>${v}</dd></div>`)
+      .join('');
+    if (html !== lastReadout) { readouts.innerHTML = html; lastReadout = html; }
+    if (caption.textContent !== cap) caption.textContent = cap;
+  }
+
+  // ——— التفاعل ———
+  function setLaw(l: Law) {
+    law = l;
+    root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) =>
+      b.setAttribute('aria-selected', String(Number(b.dataset.law) === l)),
+    );
+    root.querySelectorAll<HTMLElement>('.pane').forEach((p) => (p.hidden = Number(p.dataset.pane) !== l));
+    ghosts = [];
+    setup();
+  }
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) =>
+    b.addEventListener('click', () => setLaw(Number(b.dataset.law) as Law)),
+  );
+  root.querySelectorAll<HTMLButtonElement>('.act').forEach((b) => b.addEventListener('click', act));
+  root.querySelectorAll<HTMLButtonElement>('.reset').forEach((b) =>
+    b.addEventListener('click', () => { ghosts = []; setup(); }),
+  );
+
+  const bindOut = (input: string, output: string, fmt: (v: string) => string, onChange?: () => void) => {
+    const i = $<HTMLInputElement>(input), o = $<HTMLOutputElement>(output);
+    i.addEventListener('input', () => { o.textContent = fmt(i.value); onChange?.(); });
+  };
+  bindOut('.mu', '.mu-out', (v) => Number(v).toFixed(2));
+  bindOut('.force', '.force-out', (v) => `${v} N`);
+  bindOut('.mass', '.mass-out', (v) => `${v} kg`, () => { if (!running) setup(); });
+  bindOut('.m1', '.m1-out', (v) => `${v} kg`, () => { if (!running) setup(); });
+  bindOut('.m2', '.m2-out', (v) => `${v} kg`, () => { if (!running) setup(); });
+  root.querySelectorAll<HTMLButtonElement>('[data-mu]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const i = $<HTMLInputElement>('.mu');
+      i.value = b.dataset.mu!;
+      i.dispatchEvent(new Event('input'));
+    }),
+  );
+
+  // ——— الحلقة ———
+  let visible = true;
+  new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
+  let last = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    // خطوات صغيرة لدقة الدفع القصير في القانون الثالث
+    for (let k = 0; k < 4; k++) step(dt / 4);
+    if (visible) { drawScene(); drawChart(); updateText(); }
+    requestAnimationFrame(frame);
+  }
+  setup();
+  requestAnimationFrame(frame);
+</script>

@@ -28,7 +28,7 @@ export const units: Unit[] = [
 
 export const topics: Topic[] = [
   { id: 1, unit: 1, slug: 'mach-principle', title: 'مبدأ ماخ', en: "Mach's principle", prereqs: [], ready: true },
-  { id: 2, unit: 1, slug: 'newtons-laws-of-motion', title: 'قوانين نيوتن للحركة', en: "Newton's laws of motion", prereqs: [1] },
+  { id: 2, unit: 1, slug: 'newtons-laws-of-motion', title: 'قوانين نيوتن للحركة', en: "Newton's laws of motion", prereqs: [1], ready: true },
   { id: 3, unit: 1, slug: 'keplers-laws', title: 'قوانين كبلر', en: "Kepler's laws", prereqs: [] },
   { id: 4, unit: 1, slug: 'newtons-gravitation', title: 'قانون الجاذبية لنيوتن', en: "Newton's law of gravitation", prereqs: [2, 3] },
   { id: 5, unit: 1, slug: 'conservation-of-energy', title: 'حفظ الطاقة', en: 'Conservation of energy', prereqs: [2] },
