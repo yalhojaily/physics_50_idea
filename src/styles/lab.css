@@ -1,0 +1,39 @@
+/* أنماط مشتركة لمختبرات الدروس (تُستورد من مكوّنات المحاكاة) */
+.lab {
+  margin: 28px -16px; padding: 0;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden;
+}
+@media (min-width: 800px) { .lab { margin-inline: -80px; } }
+.lab .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: #0b1020; }
+.lab .tab {
+  font: inherit; font-size: 15px; font-weight: 700; color: #9aa5c8; cursor: pointer;
+  background: none; border: 0; border-bottom: 3px solid transparent; padding: 10px 6px 8px;
+}
+.lab .tab small { display: block; font-size: 12px; font-weight: 500; }
+.lab .tab[aria-selected='true'] { color: #fff; border-bottom-color: var(--c, var(--accent)); }
+.lab .scene { display: block; width: 100%; height: 380px; background: #070b18; touch-action: none; }
+.lab .caption {
+  margin: 0; min-height: 3.6em; background: #0b1020; color: #e8ecf8;
+  border-top: 1px solid #2a3561; padding: 10px 18px; font-size: 16px; line-height: 1.7;
+}
+.lab .controls { padding: 16px 18px 18px; display: grid; gap: 12px; }
+.lab .pane { display: grid; gap: 12px; }
+.lab .pane[hidden], .lab .row[hidden] { display: none; }
+.lab .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.lab .lbl { color: var(--muted); font-size: 15px; min-width: 130px; }
+.lab .row input[type='range'] { flex: 1; min-width: 150px; accent-color: var(--accent); }
+.lab output { font-variant-numeric: tabular-nums; min-width: 70px; direction: ltr; }
+.lab .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.lab .chips .btn { font-size: 14px; padding: 5px 12px; }
+.lab .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 0; }
+.lab .readouts div { background: var(--surface-2); border-radius: 10px; padding: 8px 12px; }
+.lab .readouts div.hl { outline: 1px solid var(--accent); }
+.lab .readouts dt { font-size: 13px; color: var(--muted); }
+.lab .readouts dd { margin: 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; direction: ltr; text-align: right; }
+.lab .chart-wrap { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; }
+.lab .chart { display: block; width: 100%; height: 170px; }
+.lab .note { margin: 0; font-size: 13px; color: var(--muted); }
+.lab table { width: 100%; border-collapse: collapse; font-size: 14px; direction: rtl; }
+.lab th, .lab td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: center; font-variant-numeric: tabular-nums; }
+.lab th { color: var(--muted); font-weight: 500; }

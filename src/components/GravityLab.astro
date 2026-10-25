@@ -1,0 +1,446 @@
+---
+// مختبر الجاذبية: مدفع نيوتن، وقانون التربيع العكسي
+import '../styles/lab.css';
+---
+
+<figure class="lab" id="gravityLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-tab="1" aria-selected="true">مدفع نيوتن<small>متى يصبح السقوط مدارًا؟</small></button>
+    <button class="tab" data-tab="2" aria-selected="false">التربيع العكسي<small>F ∝ m₁m₂ / r²</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="الأرض وقذيفة تُطلق أفقيًا من قمة جبل"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <div class="pane" data-pane="1">
+      <div class="row">
+        <span class="lbl">سرعة الإطلاق</span>
+        <input type="range" class="v0" min="1" max="12.5" step="0.01" value="6" />
+        <output class="v0-out">6.00 km/s</output>
+      </div>
+      <div class="chips">
+        <button class="btn" data-v="4">4 km/s</button>
+        <button class="btn" data-v="7">7 km/s</button>
+        <button class="btn" data-v="circ">سرعة المدار الدائري</button>
+        <button class="btn" data-v="9.5">9.5 km/s</button>
+        <button class="btn" data-v="esc">سرعة الإفلات</button>
+      </div>
+      <div class="row">
+        <button class="btn primary fire">▶ أطلق القذيفة</button>
+        <button class="btn clear">↺ امسح المسارات</button>
+      </div>
+      <p class="note">الإطلاق أفقي من ارتفاع 400 km، فوق الغلاف الجوي تقريبًا (الجبل مرسوم بمبالغة). الأرقام حقيقية، والزمن مسرّع 500 مرة.</p>
+    </div>
+
+    <div class="pane" data-pane="2" hidden>
+      <div class="row">
+        <span class="lbl">المسافة r</span>
+        <input type="range" class="dist" min="1" max="5" step="0.05" value="1" />
+        <output class="dist-out">1.00 d</output>
+      </div>
+      <div class="row">
+        <span class="lbl">الكتلة m₁</span>
+        <input type="range" class="gm1" min="1" max="4" step="1" value="1" />
+        <output class="gm1-out">1 m</output>
+      </div>
+      <div class="row">
+        <span class="lbl">الكتلة m₂</span>
+        <input type="range" class="gm2" min="1" max="4" step="1" value="1" />
+        <output class="gm2-out">1 m</output>
+      </div>
+      <div class="chart-wrap">
+        <canvas class="chart" aria-label="منحنى القوة مقابل المسافة"></canvas>
+        <p class="note">القوة نسبةً إلى F₀، وهي القوة بين كتلتين قدرهما m على مسافة d.</p>
+      </div>
+    </div>
+
+    <dl class="readouts"></dl>
+  </div>
+</figure>
+
+<script>
+  const root = document.getElementById('gravityLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const caption = $<HTMLElement>('.caption');
+  const readouts = $<HTMLElement>('.readouts');
+  const val = (s: string) => Number($<HTMLInputElement>(s).value);
+
+  // ثوابت حقيقية
+  const GM = 3.986e14; // m³/s² للأرض
+  const R = 6.371e6; // m
+  const H = 400e3; // ارتفاع الإطلاق
+  const R0 = R + H;
+  const V_CIRC = Math.sqrt(GM / R0) / 1000; // ≈ 7.67 km/s
+  const V_ESC = Math.sqrt((2 * GM) / R0) / 1000; // ≈ 10.85 km/s
+  const WARP = 500;
+  const DT = 2; // خطوة التكامل بالثواني
+  const COLORS = ['#f0a43a', '#4cc9f0', '#f27fb8', '#5ad19a', '#9b8cff'];
+
+  let tab = 1;
+
+  interface Shot {
+    x: number; y: number; vx: number; vy: number;
+    t: number; trail: [number, number][]; color: string;
+    state: 'flying' | 'crashed' | 'orbit' | 'escaped';
+    angle: number; prevAng: number; maxR: number; v0: number;
+  }
+  let shot: Shot | null = null;
+  let old: Shot[] = [];
+  let shotCount = 0;
+  let viewR = R0 * 1.5;
+
+  const stars = Array.from({ length: 180 }, () => [Math.random(), Math.random(), Math.random() * 1.2 + 0.2]);
+
+  function fire(exact?: number) {
+    if (shot) { old.unshift(shot); old = old.slice(0, 4); }
+    const v0 = exact ?? val('.v0');
+    shot = {
+      x: 0, y: R0, vx: v0 * 1000, vy: 0, t: 0, trail: [[0, R0]],
+      color: COLORS[shotCount++ % COLORS.length], state: 'flying', angle: 0, prevAng: 0, maxR: R0, v0,
+    };
+  }
+
+  /** مقدار الزاوية المقطوعة باتجاه عقارب الساعة من قمة الأرض */
+  const angleOf = (x: number, y: number) => {
+    const a = Math.atan2(x, y); // 0 عند القمة، موجبة نحو اليمين
+    return a < 0 ? a + 2 * Math.PI : a;
+  };
+
+  function stepShot(dtReal: number) {
+    if (!shot || shot.state !== 'flying') return;
+    let simT = dtReal * WARP;
+    const acc = (x: number, y: number) => {
+      const r = Math.hypot(x, y);
+      const k = -GM / (r * r * r);
+      return [k * x, k * y];
+    };
+    while (simT > 0 && shot.state === 'flying') {
+      const dt = Math.min(DT, simT);
+      simT -= dt;
+      const [ax, ay] = acc(shot.x, shot.y);
+      shot.x += shot.vx * dt + 0.5 * ax * dt * dt;
+      shot.y += shot.vy * dt + 0.5 * ay * dt * dt;
+      const [ax2, ay2] = acc(shot.x, shot.y);
+      shot.vx += 0.5 * (ax + ax2) * dt;
+      shot.vy += 0.5 * (ay + ay2) * dt;
+      shot.t += dt;
+      const r = Math.hypot(shot.x, shot.y);
+      shot.maxR = Math.max(shot.maxR, r);
+      const ang = angleOf(shot.x, shot.y);
+      if (ang < shot.prevAng - Math.PI) shot.angle += 2 * Math.PI; // أكمل دورة
+      shot.prevAng = ang;
+      if (shot.t % 20 < dt) shot.trail.push([shot.x, shot.y]);
+      if (r <= R) {
+        shot.state = 'crashed';
+        shot.trail.push([shot.x, shot.y]);
+      } else if (shot.angle >= 2 * Math.PI) {
+        shot.state = 'orbit';
+        shot.trail.push([shot.x, shot.y]);
+      } else if (r > 9 * R) {
+        shot.state = 'escaped';
+      }
+    }
+  }
+
+  const fit = (c: HTMLCanvasElement) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const { width, height } = c.getBoundingClientRect();
+    const W = Math.round(width * dpr), H2 = Math.round(height * dpr);
+    if (c.width !== W || c.height !== H2) { c.width = W; c.height = H2; }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.direction = 'ltr';
+    return { ctx, w: width, h: height };
+  };
+
+  function drawCannon() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#070b18';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#fff';
+    for (const [x, y, r] of stars) { ctx.globalAlpha = 0.2 + r * 0.3; ctx.fillRect(x * w, y * h, r, r); }
+    ctx.globalAlpha = 1;
+
+    // تكبير يتبع أبعد نقطة في الرمية الحالية
+    const target = Math.min(8 * R, Math.max(R0 * 1.25, (shot ? shot.maxR : R0) * 1.08));
+    viewR += (target - viewR) * 0.08;
+    const cx = w / 2, cy = h / 2;
+    const s = (Math.min(w, h) / 2 - 10) / viewR;
+    const X = (x: number) => cx + x * s, Y = (y: number) => cy - y * s;
+
+    // الأرض
+    const g = ctx.createRadialGradient(cx - R * s * 0.3, cy - R * s * 0.3, R * s * 0.1, cx, cy, R * s);
+    g.addColorStop(0, '#3b82c4');
+    g.addColorStop(1, '#173a6b');
+    ctx.fillStyle = '#4cc9f022';
+    ctx.beginPath(); ctx.arc(cx, cy, R * s * 1.03, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, R * s, 0, Math.PI * 2); ctx.fill();
+    // قارات رمزية
+    ctx.fillStyle = '#2f7d4a';
+    for (const [a, rr, sz] of [[0.6, 0.55, 0.28], [2.4, 0.4, 0.33], [4.1, 0.6, 0.22], [5.3, 0.2, 0.25]]) {
+      ctx.beginPath();
+      ctx.ellipse(cx + Math.cos(a) * rr * R * s, cy + Math.sin(a) * rr * R * s, sz * R * s, sz * 0.6 * R * s, a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // الجبل والمدفع
+    const mBase = R * s * 0.14;
+    ctx.fillStyle = '#8a7a63';
+    ctx.beginPath();
+    ctx.moveTo(cx - mBase, Y(R * 0.995));
+    ctx.lineTo(cx, Y(R0));
+    ctx.lineTo(cx + mBase, Y(R * 0.995));
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#e8ecf8';
+    ctx.fillRect(cx - 3, Y(R0) - 5, 14, 5);
+
+    const drawTrail = (sh: Shot, alpha: number) => {
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = sh.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      sh.trail.forEach(([x, y], i) => (i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+      if (sh.state === 'flying') ctx.lineTo(X(sh.x), Y(sh.y));
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+    old.forEach((o) => drawTrail(o, 0.45));
+    if (shot) {
+      drawTrail(shot, 1);
+      ctx.fillStyle = shot.color;
+      ctx.shadowColor = shot.color;
+      ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.arc(X(shot.x), Y(shot.y), 5, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      if (shot.state === 'crashed') {
+        ctx.strokeStyle = '#ef6a4c';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(X(shot.x), Y(shot.y), 9, 0, Math.PI * 2); ctx.stroke();
+      }
+      // سهم الجاذبية نحو المركز
+      if (shot.state === 'flying') {
+        const r = Math.hypot(shot.x, shot.y);
+        const gNow = GM / (r * r);
+        const L = Math.max(10, gNow * 4);
+        const ux = -shot.x / r, uy = -shot.y / r;
+        const px = X(shot.x), py = Y(shot.y);
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + ux * L, py - uy * L); ctx.stroke();
+      }
+    }
+  }
+
+  // ——— التربيع العكسي ———
+  function drawInverse() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#070b18';
+    ctx.fillRect(0, 0, w, h);
+    const r = val('.dist'), m1 = val('.gm1'), m2 = val('.gm2');
+    const F = (m1 * m2) / (r * r);
+    const unit = (w - 120) / 5; // بكسل لكل d
+    const cy = h / 2;
+    const x1 = w / 2 - (r * unit) / 2, x2 = w / 2 + (r * unit) / 2;
+    const rad = (m: number) => 12 + Math.sqrt(m) * 10;
+    // مسطرة المسافة
+    ctx.strokeStyle = '#ffffff40';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(x1, cy + 70); ctx.lineTo(x2, cy + 70); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#9aa5c8';
+    ctx.font = '600 13px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(`r = ${r.toFixed(2)} d`, w / 2, cy + 90);
+    // خطوط مجال تتلاشى: كثافتها تقل مع المساحة 4πr²
+    for (let k = 1; k <= 4; k++) {
+      ctx.strokeStyle = `rgba(155,140,255,${0.18 - k * 0.03})`;
+      ctx.beginPath(); ctx.arc(x1, cy, k * unit, 0, Math.PI * 2); ctx.stroke();
+    }
+    const ball = (x: number, m: number, color: string, name: string) => {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(x, cy, rad(m), 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#12121a';
+      ctx.font = '700 13px system-ui';
+      ctx.fillText(name, x, cy + 5);
+    };
+    // أسهم القوة: متساوية ومتعاكسة
+    const L = Math.min(unit * 1.6, 18 + F * 26);
+    const arrow = (x: number, dir: number) => {
+      const xs = x + dir * (rad(dir > 0 ? m1 : m2) + 4);
+      ctx.strokeStyle = '#ffd166';
+      ctx.fillStyle = '#ffd166';
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(xs, cy - 0); ctx.lineTo(xs + dir * (L - 10), cy); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(xs + dir * L, cy);
+      ctx.lineTo(xs + dir * (L - 12), cy - 8);
+      ctx.lineTo(xs + dir * (L - 12), cy + 8);
+      ctx.closePath(); ctx.fill();
+    };
+    if (r * unit > rad(m1) + rad(m2) + 2 * L + 10) { arrow(x1, 1); arrow(x2, -1); }
+    else {
+      // المسافة قصيرة: نرسم السهمين للخارج فوق الكرتين
+      ctx.fillStyle = '#ffd166';
+      ctx.fillText('القوتان متساويتان ومتعاكستان', w / 2, cy - 60);
+    }
+    ball(x1, m1, '#4cc9f0', `${m1}m`);
+    ball(x2, m2, '#f27fb8', `${m2}m`);
+    ctx.fillStyle = '#ffd166';
+    ctx.font = '700 15px system-ui';
+    ctx.fillText(`F = ${F.toFixed(3)} F₀`, w / 2, cy - 40 - rad(4));
+  }
+
+  function drawForceChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const muted = css.getPropertyValue('--muted');
+    const r = val('.dist'), m1 = val('.gm1'), m2 = val('.gm2');
+    const k = m1 * m2;
+    const L = 38, B = 20, T = 8, Rr = 8;
+    const X = (x: number) => L + ((x - 1) / 4) * (w - L - Rr);
+    const yMax = k;
+    const Y = (y: number) => T + (1 - y / yMax) * (h - T - B);
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    for (let x = 1; x <= 5; x++) {
+      ctx.beginPath(); ctx.moveTo(X(x), T); ctx.lineTo(X(x), h - B); ctx.stroke();
+      ctx.fillText(`${x}d`, X(x), h - 5);
+    }
+    ctx.textAlign = 'right';
+    for (const f of [0, 0.25, 0.5, 1]) {
+      ctx.fillText(`${(f * yMax).toFixed(2)}`, L - 5, Y(f * yMax) + 4);
+      ctx.beginPath(); ctx.moveTo(L, Y(f * yMax)); ctx.lineTo(w - Rr, Y(f * yMax)); ctx.stroke();
+    }
+    ctx.strokeStyle = '#f0a43a';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const x = 1 + (4 * i) / 120;
+      i ? ctx.lineTo(X(x), Y(k / (x * x))) : ctx.moveTo(X(x), Y(k / (x * x)));
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#4cc9f0';
+    ctx.beginPath(); ctx.arc(X(r), Y(k / (r * r)), 6, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // ——— النصوص ———
+  let lastHtml = '';
+  function setReadouts(cells: [string, string, boolean?][]) {
+    const html = cells.map(([k, v, hl]) => `<div${hl ? ' class="hl"' : ''}><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+    if (html !== lastHtml) { readouts.innerHTML = html; lastHtml = html; }
+  }
+  const setCaption = (t: string) => { if (caption.textContent !== t) caption.textContent = t; };
+
+  function predict(v0: number) {
+    const v = v0 * 1000;
+    const eps = (v * v) / 2 - GM / R0;
+    if (eps >= 0) return 'escape';
+    const a = -GM / (2 * eps);
+    const other = 2 * a - R0; // النقطة المقابلة لنقطة الإطلاق
+    return other < R ? 'crash' : 'orbit';
+  }
+
+  function textCannon() {
+    if (!shot) {
+      setReadouts([
+        ['سرعة المدار الدائري هنا', `${V_CIRC.toFixed(2)} km/s`],
+        ['سرعة الإفلات هنا', `${V_ESC.toFixed(2)} km/s`],
+        ['الجاذبية عند الإطلاق', `${(GM / (R0 * R0)).toFixed(2)} m/s²`],
+      ]);
+      setCaption('القذيفة تسقط دائمًا نحو مركز الأرض. السؤال: هل تتحرك أفقيًا بسرعة تكفي لكي «تخطئ» الأرض وهي تسقط؟ اختر سرعة وأطلق.');
+      return;
+    }
+    const r = Math.hypot(shot.x, shot.y);
+    const v = Math.hypot(shot.vx, shot.vy) / 1000;
+    setReadouts([
+      ['السرعة الآن', `${v.toFixed(2)} km/s`],
+      ['الارتفاع', `${Math.max(0, (r - R) / 1000).toFixed(0)} km`],
+      ['تسارع الجاذبية هنا', `${(GM / (r * r)).toFixed(2)} m/s²`, true],
+      ['الزمن', `${(shot.t / 60).toFixed(0)} min`],
+    ]);
+    if (shot.state === 'crashed')
+      setCaption(`سقطت القذيفة بعد ${(shot.t / 60).toFixed(0)} دقيقة، على بعد ${((angleOf(shot.x, shot.y) * R) / 1000).toFixed(0)} km على سطح الأرض. كلما زادت السرعة سقطت أبعد، لأن سطح الأرض المنحني «يبتعد» تحتها.`);
+    else if (shot.state === 'orbit')
+      setCaption(`أكملت القذيفة دورة كاملة في ${(shot.t / 60).toFixed(0)} دقيقة وعادت إلى نقطة الإطلاق! إنها ما زالت تسقط طوال الوقت، لكنها تتحرك أفقيًا بسرعة تجعل الأرض تنحني بعيدًا عنها بالقدر نفسه.`);
+    else if (shot.state === 'escaped')
+      setCaption('تجاوزت القذيفة سرعة الإفلات: الجاذبية تُبطئها لكنها لا تستطيع إعادتها أبدًا. هكذا تغادر المسابير الأرض نحو الكواكب.');
+    else {
+      const p = predict(shot.v0);
+      setCaption(
+        p === 'crash' ? 'القذيفة تسقط وتتحرك أفقيًا في الوقت نفسه. سهم الجاذبية الأصفر يشير دائمًا إلى مركز الأرض.'
+        : p === 'orbit' ? (Math.abs(shot.v0 - V_CIRC) < 0.06 ? 'السرعة مناسبة تمامًا: الارتفاع ثابت تقريبًا، والسقوط نحو الأرض يعادل انحناء سطحها.' : 'مدار إهليجي: القذيفة تبتعد وتُبطئ، ثم تعود وتُسرع، كما في قانون كبلر الثاني.')
+        : 'سرعة عالية جدًا: هل تكفي لتهرب من الأرض نهائيًا؟',
+      );
+    }
+  }
+
+  function textInverse() {
+    const r = val('.dist'), m1 = val('.gm1'), m2 = val('.gm2');
+    const F = (m1 * m2) / (r * r);
+    setReadouts([
+      ['القوة على m₁', `${F.toFixed(3)} F₀`],
+      ['القوة على m₂', `${F.toFixed(3)} F₀`],
+      ['1 / r²', (1 / (r * r)).toFixed(3), true],
+      ['m₁ × m₂', `${m1 * m2}`],
+    ]);
+    setCaption(
+      r >= 1.95 && r <= 2.05 ? 'عند ضعف المسافة صارت القوة ربع قيمتها، لا نصفها. هذا معنى «التربيع العكسي».'
+      : r >= 2.95 && r <= 3.05 ? 'عند ثلاثة أضعاف المسافة صارت القوة تُسع قيمتها.'
+      : 'حرّك المسافة إلى 2 ثم إلى 3 وراقب القوة. وغيّر الكتلتين: مضاعفة إحداهما تضاعف القوة على الجسمين معًا.',
+    );
+  }
+
+  // ——— التفاعل ———
+  function setTab(t: number) {
+    tab = t;
+    root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.setAttribute('aria-selected', String(Number(b.dataset.tab) === t)));
+    root.querySelectorAll<HTMLElement>('.pane').forEach((p) => (p.hidden = Number(p.dataset.pane) !== t));
+  }
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.addEventListener('click', () => setTab(Number(b.dataset.tab))));
+  const bind = (i: string, o: string, fmt: (v: number) => string) => {
+    const inp = $<HTMLInputElement>(i), out = $<HTMLOutputElement>(o);
+    const upd = () => (out.textContent = fmt(Number(inp.value)));
+    inp.addEventListener('input', upd);
+    upd();
+    return inp;
+  };
+  const v0 = bind('.v0', '.v0-out', (v) => `${v.toFixed(2)} km/s`);
+  bind('.dist', '.dist-out', (v) => `${v.toFixed(2)} d`);
+  bind('.gm1', '.gm1-out', (v) => `${v} m`);
+  bind('.gm2', '.gm2-out', (v) => `${v} m`);
+  root.querySelectorAll<HTMLButtonElement>('[data-v]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const d = b.dataset.v!;
+      const v = d === 'circ' ? V_CIRC : d === 'esc' ? V_ESC + 0.02 : Number(d);
+      v0.value = String(v);
+      v0.dispatchEvent(new Event('input'));
+      $<HTMLOutputElement>('.v0-out').textContent = `${v.toFixed(2)} km/s`;
+      fire(v);
+    }),
+  );
+  $<HTMLButtonElement>('.fire').addEventListener('click', () => fire());
+  $<HTMLButtonElement>('.clear').addEventListener('click', () => { shot = null; old = []; });
+
+  let visible = true;
+  new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
+  let last = performance.now();
+  function loop(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (tab === 1) stepShot(dt);
+    if (visible) {
+      if (tab === 1) { drawCannon(); textCannon(); }
+      else { drawInverse(); drawForceChart(); textInverse(); }
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+</script>

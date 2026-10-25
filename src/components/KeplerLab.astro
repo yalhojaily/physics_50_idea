@@ -1,0 +1,398 @@
+---
+// مختبر قوانين كبلر: القطع الناقص، المساحات المتساوية، T² ∝ a³
+import '../styles/lab.css';
+---
+
+<figure class="lab" id="keplerLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-law="1" aria-selected="true">القانون الأول<small>المدار قطع ناقص</small></button>
+    <button class="tab" data-law="2" aria-selected="false">القانون الثاني<small>مساحات متساوية</small></button>
+    <button class="tab" data-law="3" aria-selected="false">القانون الثالث<small>T² ∝ a³</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="مدار كوكب حول الشمس"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <div class="row ecc-row">
+      <span class="lbl">الاختلاف المركزي e</span>
+      <input type="range" class="ecc" min="0" max="0.95" step="0.001" value="0.5" />
+      <output class="ecc-out">0.50</output>
+    </div>
+    <div class="chips ecc-row">
+      <button class="btn" data-e="0">دائرة</button>
+      <button class="btn" data-e="0.017">الأرض</button>
+      <button class="btn" data-e="0.093">المريخ</button>
+      <button class="btn" data-e="0.206">عطارد</button>
+      <button class="btn" data-e="0.95">مذنب (يشبه هالي)</button>
+    </div>
+
+    <div class="pane" data-pane="3" hidden>
+      <div class="row">
+        <span class="lbl">مدار الكوكب الأزرق a₁</span>
+        <input type="range" class="a1" min="0.3" max="10" step="0.01" value="1" />
+        <output class="a1-out">1.00 AU</output>
+      </div>
+      <div class="row">
+        <span class="lbl">مدار الكوكب الوردي a₂</span>
+        <input type="range" class="a2" min="0.3" max="10" step="0.01" value="1.5" />
+        <output class="a2-out">1.50 AU</output>
+      </div>
+      <div class="chips">
+        <button class="btn" data-pair="1,1.52">الأرض والمريخ</button>
+        <button class="btn" data-pair="0.39,1">عطارد والأرض</button>
+        <button class="btn" data-pair="1,5.2">الأرض والمشتري</button>
+        <button class="btn" data-pair="1,4">a₂ = 4 a₁</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <span class="lbl">سرعة العرض</span>
+      <input type="range" class="rate" min="0.2" max="3" step="0.1" value="1" />
+      <button class="btn pause">⏸ إيقاف مؤقت</button>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap" data-pane="3" hidden>
+      <canvas class="chart" aria-label="الزمن الدوري مقابل نصف المحور الأكبر على مقياس لوغاريتمي"></canvas>
+      <p class="note">مقياس لوغاريتمي: النقاط الرمادية كواكب المجموعة الشمسية الحقيقية، والخط هو T = a^1.5. نقطتاك ملوّنتان.</p>
+    </div>
+  </div>
+</figure>
+
+<script>
+  type Law = 1 | 2 | 3;
+  const root = document.getElementById('keplerLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const caption = $<HTMLElement>('.caption');
+  const readouts = $<HTMLElement>('.readouts');
+  const val = (s: string) => Number($<HTMLInputElement>(s).value);
+
+  const SUN = '#ffd166', BLUE = '#4cc9f0', PINK = '#f27fb8', AMBER = '#f0a43a';
+  const AU_YR_TO_KMS = 4.74; // 1 AU/سنة ≈ 4.74 km/s
+  const N_WEDGES = 12;
+
+  const PLANETS: [string, number, number][] = [
+    ['عطارد', 0.387, 0.241], ['الزهرة', 0.723, 0.615], ['الأرض', 1, 1], ['المريخ', 1.524, 1.881],
+    ['المشتري', 5.203, 11.86], ['زحل', 9.537, 29.46], ['أورانوس', 19.19, 84.01], ['نبتون', 30.07, 164.8],
+  ];
+
+  let law: Law = 1;
+  let paused = false;
+  let tYears = 0; // زمن المحاكاة بالسنوات
+  let t1 = 0, t2 = 0; // أزمنة القانون الثالث
+
+  const stars = Array.from({ length: 160 }, () => [Math.random(), Math.random(), Math.random() * 1.2 + 0.2]);
+
+  /** حل معادلة كبلر M = E − e sinE بطريقة نيوتن */
+  function solveE(M: number, e: number) {
+    let E = e > 0.8 ? Math.PI : M;
+    for (let i = 0; i < 30; i++) {
+      const d = (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+      E -= d;
+      if (Math.abs(d) < 1e-10) break;
+    }
+    return E;
+  }
+  /** موقع الكوكب (الشمس في البؤرة عند الأصل) بعد زمن t من الحضيض */
+  function pos(a: number, e: number, t: number) {
+    const T = Math.pow(a, 1.5);
+    const M = (2 * Math.PI * ((t / T) % 1));
+    const E = solveE(M, e);
+    const b = a * Math.sqrt(1 - e * e);
+    return { x: a * (Math.cos(E) - e), y: b * Math.sin(E), T };
+  }
+  const speedAU = (a: number, r: number) => 2 * Math.PI * Math.sqrt(Math.max(0, 2 / r - 1 / a)); // vis-viva، GM = 4π²
+
+  const fit = (c: HTMLCanvasElement) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const { width, height } = c.getBoundingClientRect();
+    const W = Math.round(width * dpr), H = Math.round(height * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.direction = 'ltr';
+    return { ctx, w: width, h: height };
+  };
+
+  function sky(ctx: CanvasRenderingContext2D, w: number, h: number) {
+    ctx.fillStyle = '#070b18';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#ffffff';
+    for (const [x, y, r] of stars) {
+      ctx.globalAlpha = 0.25 + r * 0.3;
+      ctx.fillRect(x * w, y * h, r, r);
+    }
+    ctx.globalAlpha = 1;
+  }
+  function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, glow = 0) {
+    if (glow) { ctx.shadowColor = color; ctx.shadowBlur = glow; }
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+  function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color = '#c9cfe4', align: CanvasTextAlign = 'center') {
+    ctx.fillStyle = color;
+    ctx.font = '600 13px system-ui, sans-serif';
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+  }
+
+  // ——— القانونان الأول والثاني: مدار واحد a = 1 AU ———
+  function drawSingle() {
+    const { ctx, w, h } = fit(scene);
+    sky(ctx, w, h);
+    const a = 1, e = val('.ecc');
+    const b = a * Math.sqrt(1 - e * e);
+    const s = Math.min((w - 60) / (2 * a), (h - 50) / (2 * b));
+    const cx = w / 2 + a * e * s; // الشمس في البؤرة اليمنى، ومركز القطع في منتصف الشاشة
+    const cy = h / 2;
+    const X = (x: number) => cx + x * s;
+    const Y = (y: number) => cy - y * s;
+
+    const p = pos(a, e, tYears);
+    const T = p.T;
+
+    if (law === 2) {
+      // قطاعات زمنية متساوية من الدورة الحالية
+      const phase = (tYears / T) % 1;
+      const done = Math.floor(phase * N_WEDGES);
+      for (let k = 0; k <= done; k++) {
+        const t0 = (k / N_WEDGES) * T;
+        const t1w = k === done ? phase * T : ((k + 1) / N_WEDGES) * T;
+        ctx.fillStyle = k % 2 ? '#4cc9f055' : '#f0a43a55';
+        ctx.beginPath();
+        ctx.moveTo(X(0), Y(0));
+        const steps = 40;
+        for (let i = 0; i <= steps; i++) {
+          const q = pos(a, e, t0 + ((t1w - t0) * i) / steps);
+          ctx.lineTo(X(q.x), Y(q.y));
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // المدار
+    ctx.strokeStyle = '#9aa5c8';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(X(-a * e), Y(0), a * s, b * s, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // البؤرة الأخرى والمحور
+    const f2x = X(-2 * a * e);
+    ctx.setLineDash([3, 5]);
+    ctx.strokeStyle = '#ffffff30';
+    ctx.beginPath();
+    ctx.moveTo(X(a * (1 - e)), cy);
+    ctx.lineTo(X(-a * (1 + e)), cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const px = X(p.x), py = Y(p.y);
+    if (law === 1) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = SUN;
+      ctx.beginPath(); ctx.moveTo(X(0), cy); ctx.lineTo(px, py); ctx.stroke();
+      ctx.strokeStyle = '#bdf0ff';
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath(); ctx.moveTo(f2x, cy); ctx.lineTo(px, py); ctx.stroke();
+      ctx.setLineDash([]);
+      label(ctx, 'r₁', (X(0) + px) / 2 + 10, (cy + py) / 2 - 6, SUN);
+      label(ctx, 'r₂', (f2x + px) / 2 - 10, (cy + py) / 2 - 6, '#bdf0ff');
+      ctx.strokeStyle = '#bdf0ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(f2x, cy, 5, 0, Math.PI * 2); ctx.stroke();
+      label(ctx, 'البؤرة الأخرى (فارغة)', f2x, cy + 24, '#9aa5c8');
+    } else {
+      // سهم السرعة
+      const r = Math.hypot(p.x, p.y);
+      const v = speedAU(a, r);
+      const q = pos(a, e, tYears + T * 0.002);
+      const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy) || 1;
+      const L = Math.min(130, (v / (2 * Math.PI)) * 45);
+      ctx.strokeStyle = '#bdf0ff';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + (dx / d) * L, py - (dy / d) * L); ctx.stroke();
+    }
+
+    dot(ctx, X(0), cy, 11, SUN, 24);
+    label(ctx, 'الشمس', X(0), cy + 30, SUN);
+    dot(ctx, px, py, 7, BLUE, 10);
+    label(ctx, 'الحضيض', X(a * (1 - e)) - 4, cy - 14, '#9aa5c8', 'right');
+    label(ctx, 'الأوج', X(-a * (1 + e)) + 4, cy - 14, '#9aa5c8', 'left');
+    return { p, a, e, b };
+  }
+
+  // ——— القانون الثالث: كوكبان ———
+  function drawPair() {
+    const { ctx, w, h } = fit(scene);
+    sky(ctx, w, h);
+    const a1 = val('.a1'), a2 = val('.a2');
+    const amax = Math.max(a1, a2);
+    const s = (Math.min(w, h) / 2 - 24) / amax;
+    const cx = w / 2, cy = h / 2;
+    const orbit = (a: number, t: number, color: string) => {
+      ctx.strokeStyle = color + '66';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(cx, cy, a * s, 0, Math.PI * 2); ctx.stroke();
+      const ang = (2 * Math.PI * t) / Math.pow(a, 1.5);
+      dot(ctx, cx + Math.cos(ang) * a * s, cy - Math.sin(ang) * a * s, 7, color, 10);
+    };
+    orbit(a1, t1, BLUE);
+    orbit(a2, t2, PINK);
+    dot(ctx, cx, cy, Math.max(5, Math.min(11, s * 0.08)), SUN, 20);
+    label(ctx, `${t1.toFixed(1)} سنة`, 12, 22, '#c9cfe4', 'left');
+  }
+
+  function drawChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const muted = css.getPropertyValue('--muted');
+    const L = 40, B = 22, Tp = 8, R = 10;
+    const lx = (a: number) => L + ((Math.log10(a) + 0.6) / 2.2) * (w - L - R); // a: 0.25..40
+    const ly = (T: number) => h - B - ((Math.log10(T) + 0.9) / 3.4) * (h - B - Tp); // T: 0.125..300
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    for (const a of [0.3, 1, 3, 10, 30]) {
+      ctx.beginPath(); ctx.moveTo(lx(a), Tp); ctx.lineTo(lx(a), h - B); ctx.stroke();
+      ctx.fillText(`${a} AU`, lx(a), h - 6);
+    }
+    ctx.textAlign = 'right';
+    for (const T of [0.3, 1, 10, 100]) {
+      ctx.beginPath(); ctx.moveTo(L, ly(T)); ctx.lineTo(w - R, ly(T)); ctx.stroke();
+      ctx.fillText(`${T}y`, L - 5, ly(T) + 4);
+    }
+    // الخط T = a^1.5
+    ctx.strokeStyle = AMBER;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(lx(0.25), ly(Math.pow(0.25, 1.5)));
+    ctx.lineTo(lx(40), ly(Math.pow(40, 1.5)));
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    for (const [name, a, T] of PLANETS) {
+      dot(ctx, lx(a), ly(T), 4, '#9aa5c8');
+      ctx.fillStyle = muted;
+      ctx.fillText(name, lx(a) + 7, ly(T) + 12);
+    }
+    const a1 = val('.a1'), a2 = val('.a2');
+    dot(ctx, lx(a1), ly(Math.pow(a1, 1.5)), 6, BLUE);
+    dot(ctx, lx(a2), ly(Math.pow(a2, 1.5)), 6, PINK);
+  }
+
+  // ——— النصوص ———
+  let lastHtml = '';
+  function setReadouts(cells: [string, string, boolean?][]) {
+    const html = cells.map(([k, v, hl]) => `<div${hl ? ' class="hl"' : ''}><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+    if (html !== lastHtml) { readouts.innerHTML = html; lastHtml = html; }
+  }
+  const setCaption = (t: string) => { if (caption.textContent !== t) caption.textContent = t; };
+
+  function frame(dtReal: number) {
+    const rate = val('.rate');
+    if (law !== 3) {
+      if (!paused) tYears += (dtReal / 8) * rate; // دورة كاملة كل 8 ثوانٍ تقريبًا
+      const { p, a, e, b } = drawSingle();
+      const r1 = Math.hypot(p.x, p.y);
+      const r2 = Math.hypot(p.x + 2 * a * e, p.y);
+      if (law === 1) {
+        setReadouts([
+          ['r₁ (إلى الشمس)', `${r1.toFixed(3)} AU`],
+          ['r₂ (إلى البؤرة الأخرى)', `${r2.toFixed(3)} AU`],
+          ['r₁ + r₂', `${(r1 + r2).toFixed(3)} AU`, true],
+          ['نصف المحور الأصغر b', `${b.toFixed(3)} AU`],
+        ]);
+        setCaption(
+          e < 0.005
+            ? 'عند e = 0 تنطبق البؤرتان على المركز فيصبح القطع الناقص دائرة. زِد e لترى المدار يستطيل.'
+            : `مجموع البعدين عن البؤرتين ثابت دائمًا = 2a = 2 AU. الشمس في إحدى البؤرتين، والأخرى فارغة. المسافة إلى الشمس تتراوح بين ${(1 - e).toFixed(2)} و ${(1 + e).toFixed(2)} AU.`,
+        );
+      } else {
+        const v = speedAU(a, r1) * 29.78 / (2 * Math.PI); // مدار الأرض كمرجع: a = 1 AU
+        const vp = Math.sqrt((1 + e) / (1 - e)), va = Math.sqrt((1 - e) / (1 + e));
+        setReadouts([
+          ['السرعة الآن', `${v.toFixed(1)} km/s`, true],
+          ['البعد عن الشمس', `${r1.toFixed(2)} AU`],
+          ['السرعة عند الحضيض', `${(vp * 29.78).toFixed(1)} km/s`],
+          ['السرعة عند الأوج', `${(va * 29.78).toFixed(1)} km/s`],
+        ]);
+        setCaption('كل قطاع ملوّن يمثل 1/12 من زمن الدورة، وكلها متساوية المساحة: قصيرة عريضة قرب الشمس، وطويلة نحيفة بعيدًا عنها. لذلك يُسرع الكوكب قرب الشمس ويُبطئ بعيدًا عنها.');
+      }
+    } else {
+      if (!paused) {
+        t1 += (dtReal / 2) * rate; // سنة كل ثانيتين
+        t2 = t1;
+      }
+      drawPair();
+      drawChart();
+      const a1 = val('.a1'), a2 = val('.a2');
+      const T1 = Math.pow(a1, 1.5), T2 = Math.pow(a2, 1.5);
+      setReadouts([
+        ['T₁ (الأزرق)', `${T1.toFixed(2)} y`],
+        ['T₂ (الوردي)', `${T2.toFixed(2)} y`],
+        ['T₁² / a₁³', (T1 * T1 / (a1 ** 3)).toFixed(2), true],
+        ['T₂² / a₂³', (T2 * T2 / (a2 ** 3)).toFixed(2), true],
+        ['T₂ / T₁', (T2 / T1).toFixed(2)],
+      ]);
+      setCaption(
+        `الوردي أبعد بـ ${(a2 / a1).toFixed(2)} مرة، فيحتاج ${(T2 / T1).toFixed(2)} مرة من الوقت لدورته، لا ${(a2 / a1).toFixed(2)} فقط: مداره أطول، وسرعته أيضًا أبطأ. ومع ذلك تبقى النسبة T²/a³ واحدة لكل كواكب الشمس.`,
+      );
+    }
+  }
+
+  // ——— التفاعل ———
+  function setLaw(l: Law) {
+    law = l;
+    root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.setAttribute('aria-selected', String(Number(b.dataset.law) === l)));
+    root.querySelectorAll<HTMLElement>('[data-pane]').forEach((p) => (p.hidden = l !== 3));
+    root.querySelectorAll<HTMLElement>('.ecc-row').forEach((p) => (p.hidden = l === 3));
+    tYears = 0; t1 = t2 = 0;
+  }
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.addEventListener('click', () => setLaw(Number(b.dataset.law) as Law)));
+
+  const bind = (input: string, out: string, fmt: (v: number) => string) => {
+    const i = $<HTMLInputElement>(input), o = $<HTMLOutputElement>(out);
+    const upd = () => (o.textContent = fmt(Number(i.value)));
+    i.addEventListener('input', upd);
+    upd();
+    return i;
+  };
+  const ecc = bind('.ecc', '.ecc-out', (v) => v.toFixed(2));
+  const a1 = bind('.a1', '.a1-out', (v) => `${v.toFixed(2)} AU`);
+  const a2 = bind('.a2', '.a2-out', (v) => `${v.toFixed(2)} AU`);
+  const set = (i: HTMLInputElement, v: number) => { i.value = String(v); i.dispatchEvent(new Event('input')); };
+  root.querySelectorAll<HTMLButtonElement>('[data-e]').forEach((b) => b.addEventListener('click', () => set(ecc, Number(b.dataset.e))));
+  root.querySelectorAll<HTMLButtonElement>('[data-pair]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const [x, y] = b.dataset.pair!.split(',').map(Number);
+      set(a1, x); set(a2, y); t1 = t2 = 0;
+    }),
+  );
+  const pauseBtn = $<HTMLButtonElement>('.pause');
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? '▶ تابع' : '⏸ إيقاف مؤقت';
+  });
+
+  let visible = true;
+  new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
+  let last = performance.now();
+  function loop(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (visible) frame(dt);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+</script>
