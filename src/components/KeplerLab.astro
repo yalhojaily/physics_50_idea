@@ -159,13 +159,16 @@ import '../styles/lab.css';
     const T = p.T;
 
     if (law === 2) {
-      // قطاعات زمنية متساوية من الدورة الحالية
-      const phase = (tYears / T) % 1;
-      const done = Math.floor(phase * N_WEDGES);
-      for (let k = 0; k <= done; k++) {
-        const t0 = (k / N_WEDGES) * T;
-        const t1w = k === done ? phase * T : ((k + 1) / N_WEDGES) * T;
-        ctx.fillStyle = k % 2 ? '#4cc9f055' : '#f0a43a55';
+      // آخر 12 قطاعًا زمنيًا متساويًا (دورة كاملة متحركة)، والأحدث هو الأوضح
+      const dT = T / N_WEDGES;
+      const n = Math.floor(tYears / dT);
+      for (let j = Math.max(0, n - N_WEDGES + 1); j <= n; j++) {
+        const t0 = j * dT;
+        const t1w = Math.min((j + 1) * dT, tYears);
+        if (t1w <= t0) continue;
+        const age = n - j; // 0 للقطاع الجاري
+        const alpha = Math.round(0x70 - age * 5).toString(16).padStart(2, '0');
+        ctx.fillStyle = (j % 2 ? '#4cc9f0' : '#f0a43a') + alpha;
         ctx.beginPath();
         ctx.moveTo(X(0), Y(0));
         const steps = 40;
