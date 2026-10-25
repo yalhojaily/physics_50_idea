@@ -19,7 +19,7 @@
 }
 .lab .controls { padding: 16px 18px 18px; display: grid; gap: 12px; }
 .lab .pane { display: grid; gap: 12px; }
-.lab .pane[hidden], .lab .row[hidden] { display: none; }
+.lab [hidden] { display: none !important; }
 .lab .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .lab .lbl { color: var(--muted); font-size: 15px; min-width: 130px; }
 .lab .row input[type='range'] { flex: 1; min-width: 150px; accent-color: var(--accent); }
