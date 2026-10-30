@@ -1,0 +1,379 @@
+---
+// مختبر الحركة البراونية: حبيبة بين الجزيئات، ثم سحابة من الحبيبات تنتشر
+import '../styles/lab.css';
+import TimeControls from './TimeControls.astro';
+---
+
+<figure class="lab" id="brownLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-tab="grain" aria-selected="true">حبيبة بين الجزيئات<small>من أين تأتي الرجفة؟</small></button>
+    <button class="tab" data-tab="walk" aria-selected="false">مئات الحبيبات<small>⟨r²⟩ = 4Dt</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="حبيبة كبيرة تتقاذفها جزيئات صغيرة"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <TimeControls speeds={[2, 1, 0.5, 0.25]} initial={1} />
+
+    <div class="pane" data-pane="grain">
+      <div class="row">
+        <span class="lbl">ما تراه</span>
+        <div class="chips">
+          <button class="btn" data-view="all" aria-pressed="true">الحبيبة والجزيئات</button>
+          <button class="btn" data-view="scope" aria-pressed="false">كما في المجهر</button>
+        </div>
+      </div>
+      <div class="row">
+        <span class="lbl">كتلة الحبيبة</span>
+        <div class="chips">
+          <button class="btn" data-mass="25" aria-pressed="false">25 ضعف الجزيء</button>
+          <button class="btn" data-mass="100" aria-pressed="true">100 ضعف</button>
+          <button class="btn" data-mass="400" aria-pressed="false">400 ضعف</button>
+        </div>
+      </div>
+      <div class="row"><button class="btn restart1">↺ من جديد</button></div>
+    </div>
+
+    <div class="pane" data-pane="walk" hidden>
+      <div class="row">
+        <span class="lbl">قطر الحبيبة</span>
+        <div class="chips">
+          <button class="btn" data-d="0.5" aria-pressed="false"><span dir="ltr">0.5 µm</span></button>
+          <button class="btn" data-d="1" aria-pressed="true"><span dir="ltr">1 µm</span></button>
+          <button class="btn" data-d="2" aria-pressed="false"><span dir="ltr">2 µm</span></button>
+        </div>
+      </div>
+      <div class="row">
+        <span class="lbl">حرارة الماء</span>
+        <div class="chips">
+          <button class="btn" data-temp="5" aria-pressed="false"><span dir="ltr">5 °C</span></button>
+          <button class="btn" data-temp="20" aria-pressed="true"><span dir="ltr">20 °C</span></button>
+          <button class="btn" data-temp="60" aria-pressed="false"><span dir="ltr">60 °C</span></button>
+        </div>
+      </div>
+      <div class="row"><button class="btn primary restart2">↺ أطلق الحبيبات من المركز</button></div>
+      <p class="note">في هذا التبويب الزمن مسرّع 4 مرات. الأبعاد والأزمنة في القراءات حقيقية.</p>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap" data-pane="walk" hidden>
+      <canvas class="chart" aria-label="متوسط مربع الإزاحة مع الزمن"></canvas>
+      <p class="note">النقاط: متوسط مربع بعد الحبيبات عن نقطة البداية كما قيس. الخط: توقع آينشتاين 4Dt.</p>
+    </div>
+  </div>
+</figure>
+
+<script>
+  import { bindTimeControls } from '../scripts/timectl';
+  import { fit, readoutWriter, captionWriter, runLoop, gauss, cssVar } from '../scripts/canvas';
+
+  type Tab = 'grain' | 'walk';
+  const root = document.getElementById('brownLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const setReadouts = readoutWriter($<HTMLElement>('.readouts'));
+  const setCaption = captionWriter($<HTMLElement>('.caption'));
+  const time = bindTimeControls(root);
+  let tab: Tab = 'grain';
+
+  // ——— التبويب الأول: حبيبة بين جزيئات (وحدات المحاكاة) ———
+  const W = 1, H = 0.7;
+  const N = 400, rs = 0.003, SIG = 0.35; // نصف قطر الجزيء وانحراف سرعته في كل مركّبة
+  const RB = 0.045; // نصف قطر الحبيبة
+  let M = 100;
+  let showMolecules = true;
+  const sx = new Float64Array(N), sy = new Float64Array(N), svx = new Float64Array(N), svy = new Float64Array(N);
+  const big = { x: W / 2, y: H / 2, vx: 0, vy: 0 };
+  let trail: [number, number][] = [];
+  let grainT = 0, trailAcc = 0;
+  let hits = 0, hitRate = 0;
+  let v2Big = 0; // متوسط متحرك لمربع سرعة الحبيبة
+
+  function resetGrain() {
+    for (let i = 0; i < N; i++) {
+      do { sx[i] = Math.random() * W; sy[i] = Math.random() * H; }
+      while (Math.hypot(sx[i] - W / 2, sy[i] - H / 2) < RB + 2 * rs || sx[i] < rs || sx[i] > W - rs || sy[i] < rs || sy[i] > H - rs);
+      svx[i] = SIG * gauss(); svy[i] = SIG * gauss();
+    }
+    Object.assign(big, { x: W / 2, y: H / 2, vx: 0, vy: 0 });
+    trail = [[big.x, big.y]];
+    grainT = 0; trailAcc = 0; hits = 0; hitRate = 0;
+    v2Big = (2 * SIG * SIG) / M;
+  }
+
+  function stepGrain(dt: number) {
+    const n = Math.max(1, Math.ceil(dt / (1 / 400)));
+    const h = dt / n;
+    const k1 = (2 * M) / (1 + M), k2 = 2 / (1 + M);
+    for (let s = 0; s < n; s++) {
+      for (let i = 0; i < N; i++) {
+        sx[i] += svx[i] * h; sy[i] += svy[i] * h;
+        if (sx[i] < rs) { sx[i] = 2 * rs - sx[i]; svx[i] = Math.abs(svx[i]); }
+        if (sx[i] > W - rs) { sx[i] = 2 * (W - rs) - sx[i]; svx[i] = -Math.abs(svx[i]); }
+        if (sy[i] < rs) { sy[i] = 2 * rs - sy[i]; svy[i] = Math.abs(svy[i]); }
+        if (sy[i] > H - rs) { sy[i] = 2 * (H - rs) - sy[i]; svy[i] = -Math.abs(svy[i]); }
+      }
+      big.x += big.vx * h; big.y += big.vy * h;
+      if (big.x < RB) { big.x = 2 * RB - big.x; big.vx = Math.abs(big.vx); }
+      if (big.x > W - RB) { big.x = 2 * (W - RB) - big.x; big.vx = -Math.abs(big.vx); }
+      if (big.y < RB) { big.y = 2 * RB - big.y; big.vy = Math.abs(big.vy); }
+      if (big.y > H - RB) { big.y = 2 * (H - RB) - big.y; big.vy = -Math.abs(big.vy); }
+      // تصادمات مرنة بين الجزيئات والحبيبة (كتلة الجزيء 1)
+      const R = RB + rs;
+      for (let i = 0; i < N; i++) {
+        const dx = sx[i] - big.x, dy = sy[i] - big.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= R * R) continue;
+        const d = Math.sqrt(d2) || 1e-9;
+        const nx = dx / d, ny = dy / d;
+        const u = (svx[i] - big.vx) * nx + (svy[i] - big.vy) * ny;
+        if (u < 0) {
+          svx[i] -= k1 * u * nx; svy[i] -= k1 * u * ny;
+          big.vx += k2 * u * nx; big.vy += k2 * u * ny;
+          hits++;
+        }
+        sx[i] = big.x + nx * R; sy[i] = big.y + ny * R;
+      }
+    }
+    grainT += dt;
+    trailAcc += dt;
+    if (trailAcc >= 0.05) {
+      trailAcc = 0;
+      trail.push([big.x, big.y]);
+      if (trail.length > 1200) trail.shift();
+    }
+    hitRate += (hits / Math.max(dt, 1e-9) - hitRate) * Math.min(1, dt / 1);
+    hits = 0;
+    v2Big += (big.vx ** 2 + big.vy ** 2 - v2Big) * Math.min(1, dt / 4);
+  }
+
+  function drawGrain() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = showMolecules ? '#0b1020' : '#e9e4d4';
+    ctx.fillRect(0, 0, w, h);
+    const ppm = Math.min((w - 20) / W, (h - 20) / H);
+    const ox = (w - W * ppm) / 2, oy = (h - H * ppm) / 2;
+    const X = (x: number) => ox + x * ppm, Y = (y: number) => oy + y * ppm;
+    if (showMolecules) {
+      ctx.fillStyle = '#141c3a';
+      ctx.fillRect(X(0), Y(0), W * ppm, H * ppm);
+    } else {
+      // دائرة مجال المجهر
+      ctx.fillStyle = '#d8d2bd';
+      ctx.beginPath(); ctx.ellipse(X(W / 2), Y(H / 2), (W / 2) * ppm, (H / 2) * ppm, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    // المسار
+    ctx.strokeStyle = showMolecules ? '#f0a43a' : '#7a4a10';
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath();
+    trail.forEach(([x, y], i) => (i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+    ctx.lineTo(X(big.x), Y(big.y));
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    if (showMolecules) {
+      ctx.fillStyle = '#4cc9f0';
+      for (let i = 0; i < N; i++) ctx.fillRect(X(sx[i]) - 1.5, Y(sy[i]) - 1.5, 3, 3);
+    }
+    // الحبيبة
+    ctx.fillStyle = showMolecules ? '#f0a43a' : '#5a3a12';
+    ctx.beginPath(); ctx.arc(X(big.x), Y(big.y), RB * ppm, 0, Math.PI * 2); ctx.fill();
+    if (showMolecules) {
+      ctx.fillStyle = '#e8ecf8';
+      ctx.font = '12px system-ui';
+      ctx.textAlign = 'left';
+      ctx.fillText(`t = ${grainT.toFixed(1)} s`, X(0) + 8, Y(0) + 18);
+    }
+  }
+
+  // ——— التبويب الثاني: سحابة حبيبات في الماء (وحدات حقيقية: µm و s) ———
+  const KB = 1.380649e-23;
+  const ETA: Record<number, number> = { 5: 1.519e-3, 20: 1.002e-3, 60: 0.467e-3 }; // لزوجة الماء Pa·s
+  const NW = 300;
+  const FIELD = 60; // عرض المجال بالميكرومتر
+  const WARP = 4;
+  let dMicron = 1, tempC = 20;
+  const wx = new Float64Array(NW), wy = new Float64Array(NW);
+  let walkT = 0;
+  let msd: { t: number; r2: number }[] = [];
+  let msdAcc = 0;
+  let path: [number, number][] = [];
+
+  /** معامل الانتشار بالميكرومتر المربع لكل ثانية: D = kT / (6πηa) */
+  const diffusion = () => {
+    const a = (dMicron / 2) * 1e-6;
+    return ((KB * (tempC + 273.15)) / (6 * Math.PI * ETA[tempC] * a)) * 1e12;
+  };
+  function resetWalk() {
+    wx.fill(0); wy.fill(0);
+    walkT = 0; msd = [{ t: 0, r2: 0 }]; msdAcc = 0; path = [[0, 0]];
+  }
+  function stepWalk(dtReal: number) {
+    const dt = dtReal * WARP;
+    const D = diffusion();
+    const s = Math.sqrt(2 * D * dt);
+    for (let i = 0; i < NW; i++) { wx[i] += s * gauss(); wy[i] += s * gauss(); }
+    walkT += dt;
+    msdAcc += dt;
+    path.push([wx[0], wy[0]]);
+    if (path.length > 3000) path.shift();
+    if (msdAcc >= 0.5 && walkT <= 60.01) {
+      msdAcc = 0;
+      let r2 = 0;
+      for (let i = 0; i < NW; i++) r2 += wx[i] * wx[i] + wy[i] * wy[i];
+      msd.push({ t: walkT, r2: r2 / NW });
+    }
+  }
+  const meanR2 = () => { let r2 = 0; for (let i = 0; i < NW; i++) r2 += wx[i] ** 2 + wy[i] ** 2; return r2 / NW; };
+  /** ميل أفضل خط يمر بالأصل: ⟨r²⟩ = 4Dt ⇒ D = Σ(r²t) / (4Σt²) */
+  const fitD = () => {
+    let a = 0, b = 0;
+    for (const p of msd) { a += p.r2 * p.t; b += p.t * p.t; }
+    return b > 0 ? a / (4 * b) : 0;
+  };
+
+  function drawWalk() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#0b1020';
+    ctx.fillRect(0, 0, w, h);
+    const ppu = Math.min(w, h * 1.5) / FIELD; // بكسل لكل ميكرومتر
+    const cx = w / 2, cy = h / 2;
+    // شبكة كل 10 µm
+    ctx.strokeStyle = '#ffffff12';
+    ctx.lineWidth = 1;
+    for (let g = -30; g <= 30; g += 10) {
+      ctx.beginPath(); ctx.moveTo(cx + g * ppu, 0); ctx.lineTo(cx + g * ppu, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, cy + g * ppu); ctx.lineTo(w, cy + g * ppu); ctx.stroke();
+    }
+    // دائرة الجذر التربيعي لمتوسط مربع الإزاحة
+    const rms = Math.sqrt(meanR2());
+    ctx.strokeStyle = '#5ad19a';
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.arc(cx, cy, rms * ppu, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    // الحبيبات
+    ctx.fillStyle = '#4cc9f0';
+    ctx.globalAlpha = 0.75;
+    for (let i = 1; i < NW; i++) { ctx.beginPath(); ctx.arc(cx + wx[i] * ppu, cy + wy[i] * ppu, 2.2, 0, Math.PI * 2); ctx.fill(); }
+    ctx.globalAlpha = 1;
+    // مسار حبيبة واحدة
+    ctx.strokeStyle = '#f0a43a';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    path.forEach(([x, y], i) => (i ? ctx.lineTo(cx + x * ppu, cy + y * ppu) : ctx.moveTo(cx + x * ppu, cy + y * ppu)));
+    ctx.stroke();
+    ctx.fillStyle = '#f0a43a';
+    ctx.beginPath(); ctx.arc(cx + wx[0] * ppu, cy + wy[0] * ppu, 4, 0, Math.PI * 2); ctx.fill();
+    // مقياس الرسم
+    ctx.strokeStyle = '#e8ecf8';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(14, h - 16); ctx.lineTo(14 + 10 * ppu, h - 16); ctx.stroke();
+    ctx.fillStyle = '#e8ecf8';
+    ctx.font = '12px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('10 µm', 14, h - 22);
+    ctx.fillText(`t = ${walkT.toFixed(1)} s`, 14, 20);
+  }
+
+  function drawWalkChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const muted = cssVar('--muted');
+    const L = 40, B = 20, T = 8, R = 10;
+    const D = diffusion();
+    const yMax = Math.max(4 * D * 60, ...msd.map((p) => p.r2)) * 1.05;
+    const X = (t: number) => L + (t / 60) * (w - L - R);
+    const Y = (v: number) => h - B - (v / yMax) * (h - B - T);
+    ctx.strokeStyle = cssVar('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    for (let t = 0; t <= 60; t += 10) {
+      ctx.beginPath(); ctx.moveTo(X(t), T); ctx.lineTo(X(t), h - B); ctx.stroke();
+      ctx.fillText(`${t}s`, X(t), h - 5);
+    }
+    const step = yMax > 400 ? 200 : yMax > 200 ? 100 : yMax > 80 ? 40 : 20;
+    ctx.textAlign = 'right';
+    for (let v = 0; v <= yMax; v += step) {
+      ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(w - R, Y(v)); ctx.stroke();
+      ctx.fillText(`${v}`, L - 5, Y(v) + 4);
+    }
+    ctx.save(); ctx.translate(10, h / 2); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'center'; ctx.fillText('⟨r²⟩ µm²', 0, 0); ctx.restore();
+    ctx.strokeStyle = '#5ad19a';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(60), Y(4 * D * 60)); ctx.stroke();
+    ctx.fillStyle = '#f0a43a';
+    for (const p of msd) { ctx.beginPath(); ctx.arc(X(p.t), Y(p.r2), 3, 0, Math.PI * 2); ctx.fill(); }
+  }
+
+  // ——— النصوص ———
+  function updateText() {
+    if (tab === 'grain') {
+      const vBig = Math.sqrt(v2Big), vMol = SIG * Math.SQRT2;
+      setReadouts([
+        ['سرعة الحبيبة (متوسط)', vBig.toFixed(3)],
+        ['سرعة الجزيء (متوسط)', vMol.toFixed(3)],
+        ['النسبة المقيسة', (vBig / vMol).toFixed(3), true],
+        ['النسبة المتوقعة √(m/M)', Math.sqrt(1 / M).toFixed(3), true],
+        ['ضربات في الثانية', hitRate.toFixed(0)],
+      ]);
+      if (time.paused)
+        setCaption('لقطة: في كل لحظة تضرب الحبيبةَ جزيئات من كل الجهات، لكن عددها وقوتها لا يتساويان تمامًا بين جهة وأخرى. هذا الفرق الصغير العشوائي هو ما يدفعها.');
+      else if (showMolecules)
+        setCaption('الجزيئات الزرقاء تتطاير وتضرب الحبيبة باستمرار. كل ضربة وحدها ضعيفة، لكن الفرق العشوائي بين الضربات من الجهات المختلفة يجعل الحبيبة ترتجف وتتجول.');
+      else
+        setCaption('هذا ما رآه براون في المجهر: الجزيئات أصغر من أن تُرى، فتبدو الحبيبة كأنها تتحرك وحدها بلا سبب. جرّب حبيبة أثقل: تتباطأ رجفتها.');
+    } else {
+      const D = diffusion(), Dm = fitD();
+      setReadouts([
+        ['معامل الانتشار D (آينشتاين)', `${D.toFixed(2)} µm²/s`, true],
+        ['D من القياس', msd.length > 4 ? `${Dm.toFixed(2)} µm²/s` : '…', true],
+        ['متوسط البعد عن المركز', `${Math.sqrt(meanR2()).toFixed(1)} µm`],
+        ['الزمن', `${walkT.toFixed(1)} s`],
+      ]);
+      if (time.paused)
+        setCaption('لقطة: كل نقطة حبيبة بدأت من المركز. لا تعرف أين ستكون أي حبيبة بمفردها، لكن انتشار السحابة كلها يمكن التنبؤ به بدقة.');
+      else if (walkT >= 60)
+        setCaption(`انتهت الدقيقة. ميل الخط أعطى D = ${Dm.toFixed(2)} µm²/s، والنظرية ${D.toFixed(2)}. هكذا قاس بيران هذا الميل، فاستنتج منه عدد أفوغادرو.`);
+      else
+        setCaption('الحبيبات تنتشر، لكن ليس بسرعة ثابتة: بعد أربعة أضعاف الزمن يتضاعف بعدها مرتين فقط. متوسط مربع البعد هو الذي ينمو بخط مستقيم مع الزمن.');
+    }
+  }
+
+  // ——— التفاعل ———
+  function setTab(t: Tab) {
+    tab = t;
+    root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
+    root.querySelectorAll<HTMLElement>('[data-pane]').forEach((p) => (p.hidden = p.dataset.pane !== t));
+  }
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab as Tab)));
+  const chipGroup = (attr: string, on: (v: string) => void) => {
+    const btns = [...root.querySelectorAll<HTMLButtonElement>(`[data-${attr}]`)];
+    btns.forEach((b) => b.addEventListener('click', () => {
+      btns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      on(b.getAttribute(`data-${attr}`)!);
+    }));
+  };
+  chipGroup('view', (v) => (showMolecules = v === 'all'));
+  chipGroup('mass', (v) => { M = Number(v); resetGrain(); });
+  chipGroup('d', (v) => { dMicron = Number(v); resetWalk(); });
+  chipGroup('temp', (v) => { tempC = Number(v); resetWalk(); });
+  $<HTMLButtonElement>('.restart1').addEventListener('click', resetGrain);
+  $<HTMLButtonElement>('.restart2').addEventListener('click', () => { resetWalk(); time.paused = false; time.sync(); });
+  time.onStep = () => { for (let i = 0; i < 10; i++) (tab === 'grain' ? stepGrain : stepWalk)(0.02); };
+
+  runLoop(root, (dt) => {
+    if (!time.paused) {
+      if (tab === 'grain') stepGrain(dt * time.speed);
+      else if (walkT < 60) stepWalk(dt * time.speed);
+    }
+    if (tab === 'grain') drawGrain(); else { drawWalk(); drawWalkChart(); }
+    updateText();
+  });
+  resetGrain();
+  resetWalk();
+</script>

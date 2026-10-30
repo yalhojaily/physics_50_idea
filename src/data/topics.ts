@@ -38,9 +38,9 @@ export const topics: Topic[] = [
   { id: 8, unit: 2, slug: 'ideal-gas-law', title: 'قانون الغاز المثالي', en: 'Ideal gas law', prereqs: [5], ready: true },
   { id: 9, unit: 2, slug: 'second-law-of-thermodynamics', title: 'القانون الثاني للحرارة', en: 'Second law of thermodynamics', prereqs: [5, 8], ready: true },
   { id: 10, unit: 2, slug: 'absolute-zero', title: 'الصفر المطلق', en: 'Absolute zero', prereqs: [8, 9], ready: true },
-  { id: 11, unit: 2, slug: 'brownian-motion', title: 'الحركة البراونية', en: 'Brownian motion', prereqs: [8] },
-  { id: 12, unit: 2, slug: 'chaos-theory', title: 'نظرية الفوضى', en: 'Chaos theory', prereqs: [2] },
-  { id: 13, unit: 2, slug: 'bernoulli-equation', title: 'معادلة برنولي', en: 'Bernoulli equation', prereqs: [5] },
+  { id: 11, unit: 2, slug: 'brownian-motion', title: 'الحركة البراونية', en: 'Brownian motion', prereqs: [8], ready: true },
+  { id: 12, unit: 2, slug: 'chaos-theory', title: 'نظرية الفوضى', en: 'Chaos theory', prereqs: [2], ready: true },
+  { id: 13, unit: 2, slug: 'bernoulli-equation', title: 'معادلة برنولي', en: 'Bernoulli equation', prereqs: [5], ready: true },
 
   { id: 14, unit: 3, slug: 'newtons-theory-of-colour', title: 'نظرية نيوتن في الألوان', en: "Newton's theory of colour", prereqs: [] },
   { id: 15, unit: 3, slug: 'huygens-principle', title: 'مبدأ هويغنز', en: "Huygens' principle", prereqs: [] },

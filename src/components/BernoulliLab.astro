@@ -1,0 +1,367 @@
+---
+// مختبر برنولي: أنبوب فنتوري، وخزان تورشيلي
+import '../styles/lab.css';
+import TimeControls from './TimeControls.astro';
+---
+
+<figure class="lab" id="bernLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-tab="venturi" aria-selected="true">أنبوب يضيق<small>السرعة مقابل الضغط</small></button>
+    <button class="tab" data-tab="tank" aria-selected="false">خزان مثقوب<small>v = √(2gh)</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="ماء يجري في أنبوب يضيق في وسطه، وفوقه أنابيب قياس الضغط"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <TimeControls speeds={[1, 0.5, 0.25, 0.1]} initial={1} />
+
+    <div class="pane" data-pane="venturi">
+      <div class="row">
+        <span class="lbl">مساحة العنق ÷ مساحة الأنبوب</span>
+        <input type="range" class="ratio" min="0.3" max="1" step="0.05" value="0.4" />
+        <output class="ratio-out">0.40</output>
+      </div>
+      <div class="row">
+        <span class="lbl">معدل التدفق Q</span>
+        <input type="range" class="q" min="0.2" max="1.5" step="0.05" value="1" />
+        <output class="q-out">1.00 L/s</output>
+      </div>
+    </div>
+
+    <div class="pane" data-pane="tank" hidden>
+      <div class="row">
+        <span class="lbl">الثقوب المفتوحة</span>
+        <div class="chips">
+          <button class="btn" data-hole="0" aria-pressed="true">سفلي</button>
+          <button class="btn" data-hole="1" aria-pressed="true">أوسط</button>
+          <button class="btn" data-hole="2" aria-pressed="true">علوي</button>
+        </div>
+      </div>
+      <label class="row"><input type="checkbox" class="keep" checked /> ثبّت مستوى الماء (صنبور يعوّض ما يخرج)</label>
+      <div class="row"><button class="btn primary refill">↺ املأ الخزان</button></div>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap" data-pane="tank" hidden>
+      <canvas class="chart" aria-label="مستوى الماء مع الزمن"></canvas>
+      <p class="note">ارتفاع الماء في الخزان مع الزمن. ألغِ تثبيت المستوى لترى كيف يتباطأ التفريغ كلما نقص الماء.</p>
+    </div>
+  </div>
+</figure>
+
+<script>
+  import { bindTimeControls } from '../scripts/timectl';
+  import { fit, readoutWriter, captionWriter, runLoop, cssVar } from '../scripts/canvas';
+
+  type Tab = 'venturi' | 'tank';
+  const root = document.getElementById('bernLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const setReadouts = readoutWriter($<HTMLElement>('.readouts'));
+  const setCaption = captionWriter($<HTMLElement>('.caption'));
+  const time = bindTimeControls(root);
+  const val = (s: string) => Number($<HTMLInputElement>(s).value);
+  let tab: Tab = 'venturi';
+
+  const G = 9.81, RHO = 1000;
+
+  // ——— أنبوب فنتوري ———
+  const A1 = 1e-3; // m²، أي 10 cm²
+  const H1 = 0.5; // ارتفاع عمود الماء فوق الجزء العريض (ضغط مقيس بالمتر من الماء)
+  const LEN = 12; // طول الأنبوب بوحدات الرسم
+  const smooth = (t: number) => (1 - Math.cos(Math.PI * Math.max(0, Math.min(1, t)))) / 2;
+  /** نسبة المساحة عند الموضع x */
+  const areaFrac = (x: number) => {
+    const k = val('.ratio');
+    if (x < 4) return 1;
+    if (x < 5.5) return 1 + (k - 1) * smooth((x - 4) / 1.5);
+    if (x < 7.5) return k;
+    if (x < 9) return k + (1 - k) * smooth((x - 7.5) / 1.5);
+    return 1;
+  };
+  const speedAt = (x: number) => (val('.q') / 1000) / (A1 * areaFrac(x));
+  const headAt = (x: number) => H1 - (speedAt(x) ** 2 - speedAt(0) ** 2) / (2 * G);
+  const TUBES = [2, 6.5, 10.5];
+
+  const NP = 180;
+  const tx = new Float64Array(NP), tf = new Float64Array(NP);
+  for (let i = 0; i < NP; i++) { tx[i] = Math.random() * LEN; tf[i] = (Math.random() * 2 - 1) * 0.85; }
+  const VIS = 1.1; // وحدات رسم لكل متر في الثانية
+
+  function stepVenturi(dt: number) {
+    for (let i = 0; i < NP; i++) {
+      tx[i] += speedAt(tx[i]) * VIS * dt;
+      if (tx[i] > LEN) { tx[i] -= LEN; tf[i] = (Math.random() * 2 - 1) * 0.85; }
+    }
+  }
+
+  function drawVenturi() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#0b1020';
+    ctx.fillRect(0, 0, w, h);
+    const ox = 14, sx = (w - 28) / LEN;
+    const cy = h - 92, a = 30; // مركز الأنبوب ونصف ارتفاعه بالبكسل
+    const X = (x: number) => ox + x * sx;
+    const half = (x: number) => a * Math.sqrt(areaFrac(x)); // أنبوب دائري: القطر يتناسب مع جذر المساحة
+    // جسم الأنبوب
+    const N = 120;
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) { const x = (LEN * i) / N; i ? ctx.lineTo(X(x), cy - half(x)) : ctx.moveTo(X(x), cy - half(x)); }
+    for (let i = N; i >= 0; i--) { const x = (LEN * i) / N; ctx.lineTo(X(x), cy + half(x)); }
+    ctx.closePath();
+    ctx.fillStyle = '#16345a';
+    ctx.fill();
+    ctx.strokeStyle = '#c9cfe4';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) { const x = (LEN * i) / N; i ? ctx.lineTo(X(x), cy - half(x)) : ctx.moveTo(X(x), cy - half(x)); }
+    ctx.stroke();
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) { const x = (LEN * i) / N; i ? ctx.lineTo(X(x), cy + half(x)) : ctx.moveTo(X(x), cy + half(x)); }
+    ctx.stroke();
+    // جسيمات تتبع التيار
+    for (let i = 0; i < NP; i++) {
+      const v = speedAt(tx[i]);
+      const t = Math.min(1, v / 5);
+      ctx.fillStyle = `rgb(${Math.round(120 + 135 * t)},${Math.round(220 - 60 * t)},${Math.round(255 - 150 * t)})`;
+      ctx.beginPath(); ctx.arc(X(tx[i]), cy + tf[i] * half(tx[i]), 2.2, 0, Math.PI * 2); ctx.fill();
+    }
+    // أنابيب الضغط
+    const top = 16;
+    const colMax = cy - a - top - 6; // بكسل يقابل 0.6 m من الماء
+    const ppm = colMax / 0.6;
+    TUBES.forEach((x, k) => {
+      const tx0 = X(x);
+      const yWall = cy - half(x);
+      ctx.fillStyle = '#ffffff10';
+      ctx.fillRect(tx0 - 7, top, 14, yWall - top);
+      ctx.strokeStyle = '#c9cfe4';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(tx0 - 7, top, 14, yWall - top);
+      const hd = headAt(x);
+      const colTop = cy - a - Math.max(0, hd) * ppm;
+      ctx.fillStyle = hd > 0 ? '#4cc9f0' : '#ef6a4c';
+      ctx.fillRect(tx0 - 6, Math.max(top, colTop), 12, yWall - Math.max(top, colTop));
+      ctx.fillStyle = '#e8ecf8';
+      ctx.font = '600 12px system-ui';
+      ctx.textAlign = 'center';
+      const label = hd > 0 ? `${(hd * 100).toFixed(1)} cm` : 'أقل من الجو';
+      const ly = Math.max(14, Math.max(top, colTop) - 8);
+      const lw = ctx.measureText(label).width;
+      ctx.fillStyle = '#0b1020dd';
+      ctx.fillRect(tx0 - lw / 2 - 4, ly - 12, lw + 8, 16);
+      ctx.fillStyle = hd > 0 ? '#e8ecf8' : '#ef6a4c';
+      if (hd <= 0) ctx.direction = 'rtl';
+      ctx.fillText(label, tx0, ly);
+      ctx.direction = 'ltr';
+      ctx.fillStyle = '#9aa5c8';
+      ctx.font = '11px system-ui';
+      ctx.fillText(['1', '2', '3'][k], tx0, cy + a + 22);
+    });
+    // خط مستوى الجزء العريض للمقارنة
+    ctx.strokeStyle = '#ffffff40';
+    ctx.setLineDash([4, 5]);
+    const yRef = cy - a - H1 * ppm;
+    ctx.beginPath(); ctx.moveTo(X(0), yRef); ctx.lineTo(X(LEN), yRef); ctx.stroke();
+    ctx.setLineDash([]);
+    // سهم التدفق
+    ctx.strokeStyle = '#9aa5c8';
+    ctx.fillStyle = '#9aa5c8';
+    ctx.lineWidth = 2;
+    const ay = cy + a + 44;
+    ctx.beginPath(); ctx.moveTo(X(0.3), ay); ctx.lineTo(X(1.6), ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(1.6) + 8, ay); ctx.lineTo(X(1.6), ay - 5); ctx.lineTo(X(1.6), ay + 5); ctx.closePath(); ctx.fill();
+    ctx.font = '12px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('الجريان', X(1.75) + 8, ay + 4);
+  }
+
+  // ——— خزان تورشيلي ———
+  const TANK_H = 1.0, HOLES = [0.1, 0.45, 0.8]; // أمتار فوق الأرض
+  const AREA_RATIO = 0.004; // مساحة الثقب ÷ مساحة مقطع الخزان
+  const LEVEL0 = 0.9;
+  let level = LEVEL0, tankT = 0, histAcc = 0;
+  const open = [true, true, true];
+  let levelHist: { t: number; h: number }[] = [];
+  const drops: { x: number; y: number; vx: number; vy: number; k: number }[] = [];
+  let dropAcc = 0;
+
+  const jetSpeed = (k: number) => (level > HOLES[k] ? Math.sqrt(2 * G * (level - HOLES[k])) : 0);
+  const range = (k: number) => 2 * Math.sqrt(Math.max(0, level - HOLES[k]) * HOLES[k]);
+
+  function refill() { level = LEVEL0; tankT = 0; histAcc = 0; levelHist = [{ t: 0, h: level }]; drops.length = 0; }
+  function stepTank(dt: number) {
+    if (!$<HTMLInputElement>('.keep').checked) {
+      let out = 0;
+      for (let k = 0; k < 3; k++) if (open[k]) out += jetSpeed(k);
+      level = Math.max(0, level - AREA_RATIO * out * dt);
+    } else level = LEVEL0;
+    tankT += dt;
+    histAcc += dt;
+    if (histAcc >= 0.25) { histAcc = 0; levelHist.push({ t: tankT, h: level }); if (levelHist.length > 480) levelHist.shift(); }
+    // قطرات تتبع القذف الأفقي
+    dropAcc += dt;
+    while (dropAcc > 0.03) {
+      dropAcc -= 0.03;
+      for (let k = 0; k < 3; k++) if (open[k] && jetSpeed(k) > 0.05) drops.push({ x: 0, y: HOLES[k], vx: jetSpeed(k), vy: 0, k });
+    }
+    for (const d of drops) { d.x += d.vx * dt; d.vy -= G * dt; d.y += d.vy * dt; }
+    for (let i = drops.length - 1; i >= 0; i--) if (drops[i].y < 0) drops.splice(i, 1);
+  }
+
+  const HOLE_COLORS = ['#f0a43a', '#5ad19a', '#f27fb8'];
+  function drawTank() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#0b1020';
+    ctx.fillRect(0, 0, w, h);
+    const floor = h - 34;
+    const ppm = Math.min((floor - 16) / TANK_H, (w - 60) / 1.45);
+    const tw = 0.32 * ppm; // عرض الخزان بالبكسل
+    const wallX = 24 + tw; // الجدار الأيمن حيث الثقوب
+    const X = (x: number) => wallX + x * ppm, Y = (y: number) => floor - y * ppm;
+    // الأرض والمسطرة
+    ctx.fillStyle = '#2a3561';
+    ctx.fillRect(0, floor, w, h - floor);
+    ctx.fillStyle = '#9aa5c8';
+    ctx.font = '11px system-ui';
+    ctx.textAlign = 'center';
+    for (let m = 0; m <= 1.2; m += 0.2) {
+      ctx.fillRect(X(m), floor, 1, 6);
+      ctx.fillText(`${(m * 100).toFixed(0)} cm`, X(m), floor + 20);
+    }
+    // الخزان والماء
+    ctx.fillStyle = '#1d5f9a';
+    ctx.fillRect(24, Y(level), tw, level * ppm);
+    ctx.strokeStyle = '#c9cfe4';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(24, Y(TANK_H)); ctx.lineTo(24, floor); ctx.lineTo(wallX, floor); ctx.lineTo(wallX, Y(TANK_H)); ctx.stroke();
+    // الثقوب والنفثات
+    for (let k = 0; k < 3; k++) {
+      ctx.fillStyle = open[k] ? HOLE_COLORS[k] : '#5c6488';
+      ctx.beginPath(); ctx.arc(wallX, Y(HOLES[k]), 4, 0, Math.PI * 2); ctx.fill();
+      if (!open[k] || jetSpeed(k) <= 0.05) continue;
+      const v = jetSpeed(k);
+      ctx.strokeStyle = HOLE_COLORS[k];
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const xr = range(k);
+      for (let i = 0; i <= 40; i++) {
+        const x = (xr * i) / 40, y = HOLES[k] - (G * x * x) / (2 * v * v);
+        i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y));
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = HOLE_COLORS[k];
+      ctx.beginPath(); ctx.moveTo(X(xr), floor - 2); ctx.lineTo(X(xr) - 5, floor - 12); ctx.lineTo(X(xr) + 5, floor - 12); ctx.closePath(); ctx.fill();
+    }
+    for (const d of drops) {
+      ctx.fillStyle = HOLE_COLORS[d.k];
+      ctx.beginPath(); ctx.arc(X(d.x), Y(d.y), 2.2, 0, Math.PI * 2); ctx.fill();
+    }
+    // مستوى الماء
+    ctx.fillStyle = '#e8ecf8';
+    ctx.font = '600 12px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(`h = ${(level * 100).toFixed(1)} cm`, 28, Y(level) - 6);
+  }
+
+  function drawTankChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const muted = cssVar('--muted');
+    const L = 44, B = 20, T = 8, R = 10;
+    const tMax = Math.max(60, tankT);
+    const t0 = tMax - 60;
+    const X = (t: number) => L + ((t - t0) / 60) * (w - L - R);
+    const Y = (v: number) => h - B - (v / TANK_H) * (h - B - T);
+    ctx.strokeStyle = cssVar('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    for (let t = Math.ceil(t0 / 10) * 10; t <= tMax; t += 10) { ctx.beginPath(); ctx.moveTo(X(t), T); ctx.lineTo(X(t), h - B); ctx.stroke(); ctx.fillText(`${t}s`, X(t), h - 5); }
+    ctx.textAlign = 'right';
+    for (let v = 0; v <= TANK_H + 1e-9; v += 0.25) { ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(w - R, Y(v)); ctx.stroke(); ctx.fillText(`${Math.round(v * 100)} cm`, L - 5, Y(v) + 4); }
+    ctx.strokeStyle = '#4cc9f0';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    levelHist.filter((p) => p.t >= t0).forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(p.h)) : ctx.moveTo(X(p.t), Y(p.h))));
+    ctx.stroke();
+  }
+
+  // ——— النصوص ———
+  function updateText() {
+    if (tab === 'venturi') {
+      const v1 = speedAt(0), v2 = speedAt(6.5);
+      const dP = 0.5 * RHO * (v2 * v2 - v1 * v1);
+      setReadouts([
+        ['السرعة في الجزء العريض v₁', `${v1.toFixed(2)} m/s`],
+        ['السرعة في العنق v₂', `${v2.toFixed(2)} m/s`, true],
+        ['فرق الضغط P₁ − P₂', `${(dP / 1000).toFixed(2)} kPa`, true],
+        ['فرق ارتفاع العمودين', `${((dP / (RHO * G)) * 100).toFixed(1)} cm`],
+      ]);
+      const h2 = headAt(6.5);
+      if (time.paused)
+        setCaption('لقطة: الجسيمات في العنق متباعدة أكثر لأنها أسرع. كمية الماء التي تعبر أي مقطع كل ثانية واحدة، فحيث يضيق الأنبوب يجب أن يسرع الماء.');
+      else if (val('.ratio') > 0.97)
+        setCaption('الأنبوب بعرض واحد: السرعة واحدة في كل مكان، والأعمدة الثلاثة بالارتفاع نفسه. ضيّق العنق وراقب.');
+      else if (h2 <= 0)
+        setCaption('الماء في العنق سريع جدًا حتى صار ضغطه أقل من ضغط الجو: العمود الأوسط فرغ تمامًا. لو فتحنا ثقبًا هناك لامتص الهواء إلى الداخل. هكذا تعمل البخّاخة والمضخة الماصّة.');
+      else
+        setCaption('في العنق يسرع الماء، فينخفض ضغطه، فيقصر العمود الأوسط. وحين يعود الأنبوب واسعًا يتباطأ الماء ويعود الضغط. الطاقة نفسها تنتقل بين ضغط وحركة.');
+    } else {
+      const cells: [string, string, boolean?][] = [['ارتفاع الماء', `${(level * 100).toFixed(1)} cm`]];
+      const names = ['السفلي', 'الأوسط', 'العلوي'];
+      for (let k = 0; k < 3; k++) {
+        if (!open[k]) continue;
+        const flowing = jetSpeed(k) > 0.01;
+        cells.push([`${names[k]}: السرعة`, flowing ? `${jetSpeed(k).toFixed(2)} m/s` : 'توقف']);
+        cells.push([`${names[k]}: المدى`, flowing ? `${(range(k) * 100).toFixed(0)} cm` : '—', true]);
+      }
+      setReadouts(cells);
+      const keep = $<HTMLInputElement>('.keep').checked;
+      if (time.paused)
+        setCaption('لقطة: كل قطرة تخرج أفقيًا بسرعة √(2gh)، ثم تسقط كقذيفة. الثقب الأعمق أسرع، لكن الثقب الأعلى أبعد عن الأرض فتطير قطرته وقتًا أطول.');
+      else if (keep && open.every(Boolean))
+        setCaption('السفلي هو الأسرع، لكن الأوسط يقذف أبعد. والسفلي والعلوي يصلان إلى النقطة نفسها تقريبًا! ألغِ تثبيت المستوى وراقب كيف تقصر النفثات.');
+      else if (!keep && level <= Math.min(...HOLES.filter((_, k) => open[k]), 9) + 0.002)
+        setCaption('توقف الماء عن الخروج من الثقوب المفتوحة. لاحظ في الرسم أن المستوى نزل بسرعة في البداية ثم تباطأ: كلما قلّ الضغط فوق الثقب قلّت سرعة الخروج.');
+      else
+        setCaption(keep ? 'المستوى ثابت، فسرعة كل نفثة ثابتة. سرعة الخروج تعتمد على عمق الثقب تحت سطح الماء فقط، كما لو سقطت قطرة من السطح إلى الثقب.' : 'الخزان يفرغ، والنفثات تقصر شيئًا فشيئًا مع نقص العمق فوق كل ثقب.');
+    }
+  }
+
+  // ——— التفاعل ———
+  function setTab(t: Tab) {
+    tab = t;
+    root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
+    root.querySelectorAll<HTMLElement>('[data-pane]').forEach((p) => (p.hidden = p.dataset.pane !== t));
+  }
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab as Tab)));
+  $<HTMLInputElement>('.ratio').addEventListener('input', (e) => ($<HTMLOutputElement>('.ratio-out').textContent = Number((e.target as HTMLInputElement).value).toFixed(2)));
+  $<HTMLInputElement>('.q').addEventListener('input', (e) => ($<HTMLOutputElement>('.q-out').textContent = `${Number((e.target as HTMLInputElement).value).toFixed(2)} L/s`));
+  root.querySelectorAll<HTMLButtonElement>('[data-hole]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const k = Number(b.dataset.hole);
+      open[k] = !open[k];
+      b.setAttribute('aria-pressed', String(open[k]));
+    }),
+  );
+  $<HTMLInputElement>('.keep').addEventListener('change', refill);
+  $<HTMLButtonElement>('.refill').addEventListener('click', () => { refill(); time.paused = false; time.sync(); });
+  time.onStep = () => { for (let i = 0; i < 5; i++) (tab === 'venturi' ? stepVenturi : stepTank)(0.02); };
+
+  runLoop(root, (dt) => {
+    if (!time.paused) {
+      stepVenturi(dt * time.speed);
+      stepTank(dt * time.speed);
+    }
+    if (tab === 'venturi') drawVenturi(); else { drawTank(); drawTankChart(); }
+    updateText();
+  });
+  refill();
+</script>

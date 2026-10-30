@@ -1,0 +1,445 @@
+---
+// مختبر الفوضى: البندول المزدوج والخريطة اللوجستية
+import '../styles/lab.css';
+import TimeControls from './TimeControls.astro';
+---
+
+<figure class="lab" id="chaosLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-tab="pend" aria-selected="true">البندول المزدوج<small>فرق لا يُرى يكبر</small></button>
+    <button class="tab" data-tab="logi" aria-selected="false">الخريطة اللوجستية<small>xₙ₊₁ = r xₙ(1 − xₙ)</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="بندولات مزدوجة تبدأ من زوايا شبه متطابقة"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <TimeControls speeds={[1, 0.5, 0.25, 0.1]} initial={1} />
+
+    <div class="pane" data-pane="pend">
+      <div class="row">
+        <span class="lbl">عدد البندولات</span>
+        <div class="chips">
+          <button class="btn" data-count="2" aria-pressed="true">اثنان</button>
+          <button class="btn" data-count="30" aria-pressed="false">ثلاثون</button>
+        </div>
+      </div>
+      <div class="row">
+        <span class="lbl">زاوية البداية</span>
+        <div class="chips">
+          <button class="btn" data-start="10" aria-pressed="false"><span dir="ltr">10°</span> (صغيرة)</button>
+          <button class="btn" data-start="120" aria-pressed="true"><span dir="ltr">120°</span> (كبيرة)</button>
+        </div>
+      </div>
+      <div class="row">
+        <span class="lbl">الفرق بين بندول وآخر</span>
+        <div class="chips">
+          <button class="btn" data-off="1e-2" aria-pressed="true"><span dir="ltr">0.01°</span></button>
+          <button class="btn" data-off="1e-4" aria-pressed="false"><span dir="ltr">0.0001°</span></button>
+          <button class="btn" data-off="1e-6" aria-pressed="false"><span dir="ltr">10⁻⁶°</span></button>
+          <button class="btn" data-off="1e-8" aria-pressed="false"><span dir="ltr">10⁻⁸°</span></button>
+        </div>
+      </div>
+      <div class="row"><button class="btn primary release">↺ أطلق من جديد</button></div>
+      <table class="horizon" hidden>
+        <thead><tr><th>الفرق في البداية</th><th>زمن بقاء التنبؤ صحيحًا</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="pane" data-pane="logi" hidden>
+      <div class="row">
+        <span class="lbl">المعامل r</span>
+        <input type="range" class="r" min="2.5" max="4" step="0.001" value="3.2" />
+        <output class="r-out">3.200</output>
+      </div>
+      <div class="chips">
+        <button class="btn" data-r="2.8"><span dir="ltr">2.8</span></button>
+        <button class="btn" data-r="3.2"><span dir="ltr">3.2</span></button>
+        <button class="btn" data-r="3.5"><span dir="ltr">3.5</span></button>
+        <button class="btn" data-r="3.83"><span dir="ltr">3.83</span></button>
+        <button class="btn" data-r="3.9"><span dir="ltr">3.9</span></button>
+      </div>
+      <div class="row"><button class="btn primary restartL">↺ ابدأ من x₀ = 0.2</button></div>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap">
+      <canvas class="chart" aria-label="الفرق بين البندولين، أو قيم الخريطة مع الزمن"></canvas>
+      <p class="note chart-note"></p>
+    </div>
+  </div>
+</figure>
+
+<style>
+  .horizon { max-width: 420px; }
+</style>
+
+<script>
+  import { bindTimeControls } from '../scripts/timectl';
+  import { fit, readoutWriter, captionWriter, runLoop, cssVar } from '../scripts/canvas';
+
+  type Tab = 'pend' | 'logi';
+  const root = document.getElementById('chaosLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const setReadouts = readoutWriter($<HTMLElement>('.readouts'));
+  const setCaption = captionWriter($<HTMLElement>('.caption'));
+  const time = bindTimeControls(root);
+  let tab: Tab = 'pend';
+
+  // ——— البندول المزدوج: كتلتان متساويتان وذراعان طول كل منهما 1 m ———
+  const G = 9.81, L = 1;
+  let count = 2, startDeg = 120, offDeg = 1e-2;
+  let th1 = new Float64Array(0), th2 = new Float64Array(0), w1 = new Float64Array(0), w2 = new Float64Array(0);
+  let pT = 0;
+  let sepHist: { t: number; s: number }[] = [];
+  let sepAcc = 0;
+  let horizonT: number | null = null;
+  const horizons = new Map<number, number | null>(); // الفرق ← زمن التنبؤ
+  let trails: [number, number][][] = [];
+  const COLORS = ['#f0a43a', '#4cc9f0'];
+  const SEP_LIMIT = 0.5; // راديان: عندها نقول إن التنبؤ فشل
+  const T_CHART = 30;
+
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+  const fmtOff = (o: number) => (o >= 1e-4 ? `${o}°` : `10⁻${String(Math.round(-Math.log10(o))).replace(/\d/g, (d) => SUP[+d])}°`);
+  /** رقم صغير أو كبير بصيغة مقروءة: 6.6×10⁻⁹ */
+  const sci = (v: number, digits = 2) => {
+    if (v === 0) return '0';
+    const e = Math.floor(Math.log10(Math.abs(v)));
+    if (e >= -2 && e <= 3) return v.toFixed(Math.max(0, digits - 1 - e));
+    const m = v / 10 ** e;
+    const sup = (e < 0 ? '⁻' : '') + String(Math.abs(e)).replace(/\d/g, (d) => SUP[+d]);
+    return `${m.toFixed(digits - 1)}×10${sup}`;
+  };
+  function release() {
+    th1 = new Float64Array(count); th2 = new Float64Array(count);
+    w1 = new Float64Array(count); w2 = new Float64Array(count);
+    for (let k = 0; k < count; k++) { th1[k] = rad(startDeg); th2[k] = rad(startDeg + k * offDeg); }
+    pT = 0; sepHist = [{ t: 0, s: rad(offDeg) }]; sepAcc = 0; horizonT = null;
+    trails = Array.from({ length: Math.min(count, 2) }, () => []);
+  }
+
+  /** معادلات الحركة للبندول المزدوج (كتلتان متساويتان، ذراعان متساويان) */
+  function acc(a1: number, a2: number, v1: number, v2: number): [number, number] {
+    const d = a1 - a2;
+    const den = 3 - Math.cos(2 * d);
+    const b1 = (-3 * G * Math.sin(a1) - G * Math.sin(a1 - 2 * a2) - 2 * Math.sin(d) * (v2 * v2 * L + v1 * v1 * L * Math.cos(d))) / (L * den);
+    const b2 = (2 * Math.sin(d) * (2 * v1 * v1 * L + 2 * G * Math.cos(a1) + v2 * v2 * L * Math.cos(d))) / (L * den);
+    return [b1, b2];
+  }
+  function rk4(k: number, h: number) {
+    const a1 = th1[k], a2 = th2[k], v1 = w1[k], v2 = w2[k];
+    const [p1, q1] = acc(a1, a2, v1, v2);
+    const [p2, q2] = acc(a1 + 0.5 * h * v1, a2 + 0.5 * h * v2, v1 + 0.5 * h * p1, v2 + 0.5 * h * q1);
+    const [p3, q3] = acc(a1 + 0.5 * h * (v1 + 0.5 * h * p1), a2 + 0.5 * h * (v2 + 0.5 * h * q1), v1 + 0.5 * h * p2, v2 + 0.5 * h * q2);
+    const [p4, q4] = acc(a1 + h * (v1 + 0.5 * h * p2), a2 + h * (v2 + 0.5 * h * q2), v1 + h * p3, v2 + h * q3);
+    th1[k] = a1 + (h / 6) * (v1 + 2 * (v1 + 0.5 * h * p1) + 2 * (v1 + 0.5 * h * p2) + (v1 + h * p3));
+    th2[k] = a2 + (h / 6) * (v2 + 2 * (v2 + 0.5 * h * q1) + 2 * (v2 + 0.5 * h * q2) + (v2 + h * q3));
+    w1[k] = v1 + (h / 6) * (p1 + 2 * p2 + 2 * p3 + p4);
+    w2[k] = v2 + (h / 6) * (q1 + 2 * q2 + 2 * q3 + q4);
+  }
+  const wrap = (a: number) => { a = (a + Math.PI) % (2 * Math.PI); if (a < 0) a += 2 * Math.PI; return a - Math.PI; };
+  const separation = () => Math.hypot(wrap(th1[0] - th1[1]), wrap(th2[0] - th2[1]));
+
+  function stepPend(dt: number) {
+    const n = Math.max(1, Math.ceil(dt / (1 / 1000)));
+    const h = dt / n;
+    for (let s = 0; s < n; s++) for (let k = 0; k < count; k++) rk4(k, h);
+    pT += dt;
+    const sep = separation();
+    if (horizonT === null && sep > SEP_LIMIT) {
+      horizonT = pT;
+      if (startDeg > 30) { horizons.set(offDeg, pT); renderHorizons(); }
+    }
+    sepAcc += dt;
+    if (sepAcc >= 0.05 && pT <= T_CHART) { sepAcc = 0; sepHist.push({ t: pT, s: sep }); }
+    for (let k = 0; k < trails.length; k++) {
+      trails[k].push(bob2(k));
+      if (trails[k].length > 90) trails[k].shift();
+    }
+  }
+  const bob2 = (k: number): [number, number] => [L * Math.sin(th1[k]) + L * Math.sin(th2[k]), L * Math.cos(th1[k]) + L * Math.cos(th2[k])];
+
+  function renderHorizons() {
+    const table = $<HTMLElement>('.horizon');
+    const rows = [...horizons.entries()].sort((a, b) => b[0] - a[0]);
+    table.hidden = rows.length === 0;
+    table.querySelector('tbody')!.innerHTML = rows
+      .map(([o, t]) => `<tr><td><span class="ltr">${fmtOff(o)}</span></td><td><span class="ltr">${t === null ? '—' : t.toFixed(1) + ' s'}</span></td></tr>`)
+      .join('');
+  }
+
+  function drawPend() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#0b1020';
+    ctx.fillRect(0, 0, w, h);
+    const ppm = Math.min(w, h) / 4.6;
+    const px = w / 2, py = h / 2 - 0.1 * ppm;
+    const X = (x: number) => px + x * ppm, Y = (y: number) => py + y * ppm;
+    // آثار الكرة السفلى
+    for (let k = 0; k < trails.length; k++) {
+      ctx.strokeStyle = COLORS[k];
+      ctx.globalAlpha = 0.45;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      trails[k].forEach(([x, y], i) => (i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    for (let k = count - 1; k >= 0; k--) {
+      const color = count === 2 ? COLORS[k] : `hsl(${(k / count) * 300}, 80%, 62%)`;
+      const x1 = L * Math.sin(th1[k]), y1 = L * Math.cos(th1[k]);
+      const [x2, y2] = bob2(k);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = count === 2 ? 0.95 : 0.7;
+      ctx.lineWidth = count === 2 ? 3 : 1.5;
+      ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(x1), Y(y1)); ctx.lineTo(X(x2), Y(y2)); ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(X(x1), Y(y1), count === 2 ? 7 : 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(X(x2), Y(y2), count === 2 ? 9 : 5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#c9cfe4';
+    ctx.beginPath(); ctx.arc(X(0), Y(0), 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e8ecf8';
+    ctx.font = '12px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(`t = ${pT.toFixed(1)} s`, 12, 20);
+  }
+
+  function drawSepChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const muted = cssVar('--muted');
+    const Lm = 44, B = 20, T = 8, R = 10;
+    const yLo = -11, yHi = 1;
+    const X = (t: number) => Lm + (t / T_CHART) * (w - Lm - R);
+    const Y = (lg: number) => h - B - ((Math.max(yLo, Math.min(yHi, lg)) - yLo) / (yHi - yLo)) * (h - B - T);
+    ctx.strokeStyle = cssVar('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    for (let t = 0; t <= T_CHART; t += 5) {
+      ctx.beginPath(); ctx.moveTo(X(t), T); ctx.lineTo(X(t), h - B); ctx.stroke();
+      ctx.fillText(`${t}s`, X(t), h - 5);
+    }
+    ctx.textAlign = 'right';
+    for (let e = -10; e <= 0; e += 2) {
+      ctx.beginPath(); ctx.moveTo(Lm, Y(e)); ctx.lineTo(w - R, Y(e)); ctx.stroke();
+      ctx.fillText(`10^${e}`, Lm - 5, Y(e) + 4);
+    }
+    ctx.strokeStyle = '#ef6a4c';
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.moveTo(Lm, Y(Math.log10(SEP_LIMIT))); ctx.lineTo(w - R, Y(Math.log10(SEP_LIMIT))); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#f0a43a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    sepHist.forEach((p, i) => { const y = Y(Math.log10(Math.max(1e-12, p.s))); i ? ctx.lineTo(X(p.t), y) : ctx.moveTo(X(p.t), y); });
+    ctx.stroke();
+  }
+
+  // ——— الخريطة اللوجستية ———
+  const rIn = $<HTMLInputElement>('.r');
+  const X0 = 0.2, EPS = 1e-6;
+  let xa = X0, xb = X0 + EPS, iter = 0, iterAcc = 0;
+  let seriesA: number[] = [X0], seriesB: number[] = [X0 + EPS];
+  let bifCache: { w: number; h: number; img: HTMLCanvasElement } | null = null;
+  const ITER_RATE = 6; // تكرارات في الثانية عند السرعة 1×
+
+  const r = () => Number(rIn.value);
+  function restartLogi() {
+    xa = X0; xb = X0 + EPS; iter = 0; iterAcc = 0;
+    seriesA = [xa]; seriesB = [xb];
+  }
+  function iterate() {
+    const rr = r();
+    xa = rr * xa * (1 - xa);
+    xb = rr * xb * (1 - xb);
+    iter++;
+    seriesA.push(xa); seriesB.push(xb);
+    if (seriesA.length > 80) { seriesA.shift(); seriesB.shift(); }
+  }
+  function stepLogi(dt: number) {
+    iterAcc += dt * ITER_RATE;
+    while (iterAcc >= 1) { iterAcc -= 1; iterate(); }
+  }
+  /** الدور بعد زوال الأثر الابتدائي، أو 0 إن كان السلوك فوضويًا */
+  function period(rr: number) {
+    let x = 0.2;
+    for (let i = 0; i < 4000; i++) x = rr * x * (1 - x);
+    const orbit: number[] = [];
+    for (let i = 0; i < 130; i++) { orbit.push(x); x = rr * x * (1 - x); }
+    for (let p = 1; p <= 64; p++) {
+      let ok = true;
+      for (let i = 0; i + p < orbit.length; i++) if (Math.abs(orbit[i] - orbit[i + p]) > 1e-5) { ok = false; break; }
+      if (ok) return p;
+    }
+    return 0;
+  }
+
+  function buildBifurcation(w: number, h: number) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    const ctx = c.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#0b1020';
+    ctx.fillRect(0, 0, w, h);
+    const Lm = 40, B = 24, T = 10, R = 12;
+    ctx.fillStyle = 'rgba(155,140,255,0.35)';
+    for (let px = 0; px <= w - Lm - R; px++) {
+      const rr = 2.5 + (1.5 * px) / (w - Lm - R);
+      let x = 0.5;
+      for (let i = 0; i < 300; i++) x = rr * x * (1 - x);
+      for (let i = 0; i < 200; i++) {
+        x = rr * x * (1 - x);
+        ctx.fillRect(Lm + px, T + (1 - x) * (h - T - B), 1, 1);
+      }
+    }
+    ctx.fillStyle = '#9aa5c8';
+    ctx.font = '11px system-ui';
+    ctx.textAlign = 'center';
+    for (let rr = 2.5; rr <= 4.001; rr += 0.25) ctx.fillText(rr.toFixed(2), Lm + ((rr - 2.5) / 1.5) * (w - Lm - R), h - 8);
+    ctx.textAlign = 'right';
+    for (const v of [0, 0.5, 1]) ctx.fillText(String(v), Lm - 6, T + (1 - v) * (h - T - B) + 4);
+    return { w, h, img: c };
+  }
+  function drawLogi() {
+    const { ctx, w, h } = fit(scene);
+    if (!bifCache || bifCache.w !== w || bifCache.h !== h) bifCache = buildBifurcation(w, h);
+    ctx.drawImage(bifCache.img, 0, 0, w, h);
+    const Lm = 40, B = 24, T = 10, R = 12;
+    const px = Lm + ((r() - 2.5) / 1.5) * (w - Lm - R);
+    ctx.strokeStyle = '#f0a43a';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px, T); ctx.lineTo(px, h - B); ctx.stroke();
+    // القيم الحالية على الخط
+    ctx.fillStyle = '#f0a43a';
+    ctx.beginPath(); ctx.arc(px, T + (1 - xa) * (h - T - B), 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e8ecf8';
+    ctx.font = '600 12px system-ui';
+    ctx.direction = 'rtl';
+    ctx.textAlign = 'right';
+    const title = 'مخطط التفرّع: أين تستقر القيم لكل قيمة من r';
+    const tx = Lm + 0.55 * (w - Lm - R), tw = ctx.measureText(title).width;
+    ctx.fillStyle = '#0b1020cc';
+    ctx.fillRect(tx - tw - 6, T + 1, tw + 12, 20);
+    ctx.fillStyle = '#e8ecf8';
+    ctx.fillText(title, tx, T + 15);
+    ctx.direction = 'ltr';
+  }
+  function drawSeries() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const muted = cssVar('--muted');
+    const Lm = 32, B = 18, T = 8, R = 10;
+    const n = 80;
+    const X = (i: number) => Lm + (i / (n - 1)) * (w - Lm - R);
+    const Y = (v: number) => h - B - v * (h - B - T);
+    ctx.strokeStyle = cssVar('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'right';
+    for (const v of [0, 0.5, 1]) { ctx.beginPath(); ctx.moveTo(Lm, Y(v)); ctx.lineTo(w - R, Y(v)); ctx.stroke(); ctx.fillText(String(v), Lm - 5, Y(v) + 4); }
+    ctx.textAlign = 'center';
+    const first = iter - seriesA.length + 1;
+    ctx.fillText(`n = ${first}`, X(0) + 18, h - 4);
+    ctx.fillText(`n = ${iter}`, X(seriesA.length - 1), h - 4);
+    const line = (s: number[], color: string, width: number) => {
+      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width;
+      ctx.beginPath();
+      s.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
+      ctx.stroke();
+      s.forEach((v, i) => { ctx.beginPath(); ctx.arc(X(i), Y(v), 2.5, 0, Math.PI * 2); ctx.fill(); });
+    };
+    line(seriesB, '#4cc9f0', 1.5);
+    line(seriesA, '#f0a43a', 2);
+  }
+
+  // ——— النصوص ———
+  let periodCache = { r: -1, p: 0 };
+  function updateText() {
+    if (tab === 'pend') {
+      const sep = separation();
+      const chaotic = startDeg > 30;
+      setReadouts([
+        ['الفرق في البداية', fmtOff(offDeg)],
+        ['الفرق الآن', `${sci((sep * 180) / Math.PI)}°`, true],
+        ['كم مرة كبر الفرق', sci(sep / rad(offDeg))],
+        ['زمن بقاء التنبؤ', horizonT === null ? (chaotic ? '…' : 'لم يفشل بعد') : `${horizonT.toFixed(1)} s`, true],
+      ]);
+      if (time.paused)
+        setCaption(chaotic
+          ? `لقطة عند ${pT.toFixed(1)} s: البندولان بدآ بفرق ${fmtOff(offDeg)} فقط، والقانون الذي يحكمهما واحد بلا أي عشوائية. ومع ذلك صار الفرق الآن ${sci((sep * 180) / Math.PI)}°.`
+          : 'لقطة: عند زاوية صغيرة يتصرف البندول المزدوج تصرفًا منتظمًا، والفرق الصغير يبقى صغيرًا.');
+      else if (!chaotic)
+        setCaption('زاوية البداية صغيرة: الحركة منتظمة، والبندولان يبقيان متطابقين تقريبًا. الفوضى لا تظهر في كل نظام ولا في كل الظروف.');
+      else if (horizonT === null)
+        setCaption('البندولان يبدوان متطابقين تمامًا. راقب الرسم: الفرق بينهما يتضاعف مرة بعد مرة، والخط يصعد كأنه مستقيم على المقياس اللوغاريتمي.');
+      else
+        setCaption('افترقا! جرّب فرقًا أصغر بمئة مرة وأطلق من جديد، ثم قارن الأزمنة في الجدول: تصغير الخطأ مئة مرة لا يطيل التنبؤ إلا بثوانٍ قليلة.');
+    } else {
+      const rr = r();
+      if (periodCache.r !== rr) periodCache = { r: rr, p: period(rr) };
+      const p = periodCache.p;
+      const kind = p === 1 ? 'تستقر على قيمة واحدة' : p === 2 ? 'تتكرر كل خطوتين' : p ? `تتكرر كل ${p} خطوات` : 'فوضى: لا تكرار';
+      setReadouts([
+        ['r', rr.toFixed(3)],
+        ['السلوك', kind, true],
+        ['xₙ (البرتقالي)', xa.toFixed(6)],
+        ['الفرق بين المسارين', sci(Math.abs(xa - xb))],
+      ]);
+      if (time.paused)
+        setCaption(`لقطة عند الخطوة ${iter}: البرتقالي بدأ من 0.2، والأزرق من 0.200001. القاعدة بسيطة: اضرب x في (1 − x) ثم في r.`);
+      else if (p === 1) setCaption('القيم تستقر على رقم واحد مهما كانت البداية. ارفع r فوق 3 وراقب ماذا يحدث.');
+      else if (p === 3) setCaption('نافذة هدوء داخل الفوضى: عند r قريب من 3.83 يعود النظام فجأة إلى دور طوله 3. وجود دور 3 في هذه المعادلة يضمن وجود أدوار من كل الأطوال، وهي نتيجة لي ويورك سنة 1975.');
+      else if (p > 0) setCaption(`القيم تتأرجح بين ${p === 2 ? 'قيمتين' : `${p} قيم`} وتكرر نفسها. ومع رفع r يتضاعف الدور: 2 ثم 4 ثم 8، كل مضاعفة أسرع من التي قبلها.`);
+      else setCaption('فوضى: القيم لا تكرر نفسها أبدًا، والمساران اللذان بدآ بفرق واحد في المليون افترقا تمامًا. معادلة من سطر واحد، بلا أي عشوائية.');
+    }
+  }
+
+  // ——— التفاعل ———
+  function setTab(t: Tab) {
+    tab = t;
+    root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
+    root.querySelectorAll<HTMLElement>('[data-pane]').forEach((p) => (p.hidden = p.dataset.pane !== t));
+    $<HTMLElement>('.chart-note').textContent = t === 'pend'
+      ? 'الفرق بين البندولين الأولين (بالراديان) على مقياس لوغاريتمي. الخط الأحمر: عندها لا يعود التنبؤ مفيدًا.'
+      : 'البرتقالي يبدأ من 0.2 والأزرق من 0.200001. آخر 80 خطوة.';
+  }
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab as Tab)));
+  const chipGroup = (attr: string, on: (v: string) => void) => {
+    const btns = [...root.querySelectorAll<HTMLButtonElement>(`[data-${attr}]`)];
+    btns.forEach((b) => b.addEventListener('click', () => {
+      btns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      on(b.getAttribute(`data-${attr}`)!);
+    }));
+  };
+  const go = () => { release(); time.paused = false; time.sync(); };
+  chipGroup('count', (v) => { count = Number(v); go(); });
+  chipGroup('start', (v) => { startDeg = Number(v); go(); });
+  chipGroup('off', (v) => { offDeg = Number(v); go(); });
+  $<HTMLButtonElement>('.release').addEventListener('click', go);
+  const setR = (v: number) => { rIn.value = String(v); $<HTMLOutputElement>('.r-out').textContent = v.toFixed(3); restartLogi(); };
+  rIn.addEventListener('input', () => setR(r()));
+  root.querySelectorAll<HTMLButtonElement>('[data-r]').forEach((b) => b.addEventListener('click', () => setR(Number(b.dataset.r))));
+  $<HTMLButtonElement>('.restartL').addEventListener('click', restartLogi);
+  time.onStep = () => (tab === 'pend' ? stepPend(0.1) : iterate());
+
+  runLoop(root, (dt) => {
+    if (!time.paused) (tab === 'pend' ? stepPend : stepLogi)(dt * time.speed);
+    if (tab === 'pend') { drawPend(); drawSepChart(); } else { drawLogi(); drawSeries(); }
+    updateText();
+  });
+  release();
+  restartLogi();
+  setTab('pend');
+</script>
