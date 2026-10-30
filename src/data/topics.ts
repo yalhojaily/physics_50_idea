@@ -31,9 +31,9 @@ export const topics: Topic[] = [
   { id: 2, unit: 1, slug: 'newtons-laws-of-motion', title: 'قوانين نيوتن للحركة', en: "Newton's laws of motion", prereqs: [1], ready: true },
   { id: 3, unit: 1, slug: 'keplers-laws', title: 'قوانين كبلر', en: "Kepler's laws", prereqs: [], ready: true },
   { id: 4, unit: 1, slug: 'newtons-gravitation', title: 'قانون الجاذبية لنيوتن', en: "Newton's law of gravitation", prereqs: [2, 3], ready: true },
-  { id: 5, unit: 1, slug: 'conservation-of-energy', title: 'حفظ الطاقة', en: 'Conservation of energy', prereqs: [2] },
-  { id: 6, unit: 1, slug: 'simple-harmonic-motion', title: 'الحركة التوافقية البسيطة', en: 'Simple harmonic motion', prereqs: [7] },
-  { id: 7, unit: 1, slug: 'hookes-law', title: 'قانون هوك', en: "Hooke's law", prereqs: [2] },
+  { id: 5, unit: 1, slug: 'conservation-of-energy', title: 'حفظ الطاقة', en: 'Conservation of energy', prereqs: [2], ready: true },
+  { id: 6, unit: 1, slug: 'simple-harmonic-motion', title: 'الحركة التوافقية البسيطة', en: 'Simple harmonic motion', prereqs: [7], ready: true },
+  { id: 7, unit: 1, slug: 'hookes-law', title: 'قانون هوك', en: "Hooke's law", prereqs: [2], ready: true },
 
   { id: 8, unit: 2, slug: 'ideal-gas-law', title: 'قانون الغاز المثالي', en: 'Ideal gas law', prereqs: [5] },
   { id: 9, unit: 2, slug: 'second-law-of-thermodynamics', title: 'القانون الثاني للحرارة', en: 'Second law of thermodynamics', prereqs: [5, 8] },

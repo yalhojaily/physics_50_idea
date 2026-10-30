@@ -1,0 +1,416 @@
+---
+// مختبر حفظ الطاقة: كرة على مسار، مع الاحتكاك وأشرطة الطاقة الحية
+import '../styles/lab.css';
+---
+
+<figure class="lab" id="energyLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-track="bowl" aria-selected="true">وعاء<small>نصف أنبوب</small></button>
+    <button class="tab" data-track="hills" aria-selected="false">تلال<small>هل تعبر الكرة؟</small></button>
+    <button class="tab" data-track="ramp" aria-selected="false">منحدر وأرض<small>أين تذهب الطاقة؟</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="مسار تتدحرج عليه كرة، اضغط على المسار لتضع الكرة"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <p class="note">اضغط أو اسحب على المسار لتضع الكرة في أي نقطة، ثم اتركها.</p>
+    <div class="row">
+      <span class="lbl">الاحتكاك μ</span>
+      <input type="range" class="mu" min="0" max="0.3" step="0.01" value="0" />
+      <output class="mu-out">0.00</output>
+    </div>
+    <div class="row">
+      <span class="lbl">الكتلة m</span>
+      <input type="range" class="mass" min="10" max="80" step="5" value="40" />
+      <output class="mass-out">40 kg</output>
+    </div>
+    <div class="row">
+      <button class="btn primary drop">▶ أطلق من القمة اليسرى</button>
+      <button class="btn pause">⏸ إيقاف مؤقت</button>
+    </div>
+
+    <div class="ebars" aria-label="توزيع الطاقة">
+      <div class="eb" data-k="ke"><span class="n">حركية KE</span><span class="track"><i style="background:#4cc9f0"></i></span><span class="v ltr">0 J</span></div>
+      <div class="eb" data-k="pe"><span class="n">وضع PE</span><span class="track"><i style="background:#f0a43a"></i></span><span class="v ltr">0 J</span></div>
+      <div class="eb" data-k="heat"><span class="n">حرارة</span><span class="track"><i style="background:#ef6a4c"></i></span><span class="v ltr">0 J</span></div>
+      <div class="eb total" data-k="tot"><span class="n">المجموع</span><span class="track"><i style="background:#5ad19a"></i></span><span class="v ltr">0 J</span></div>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap">
+      <canvas class="chart" aria-label="الطاقة الحركية وطاقة الوضع والحرارة مع الزمن"></canvas>
+      <p class="note">
+        <span style="color:#4cc9f0">━ حركية</span>
+        &nbsp; <span style="color:#f0a43a">━ وضع</span>
+        &nbsp; <span style="color:#ef6a4c">━ حرارة</span>
+        &nbsp; <span style="color:#5ad19a">━ المجموع</span>
+        &nbsp;— آخر 10 ثوانٍ
+      </p>
+    </div>
+  </div>
+</figure>
+
+<style>
+  .ebars { display: grid; gap: 6px; }
+  .eb { display: grid; grid-template-columns: 92px 1fr 84px; align-items: center; gap: 10px; font-size: 14px; }
+  .eb .n { color: var(--muted); }
+  .eb .track { height: 16px; background: var(--surface-2); border-radius: 8px; overflow: hidden; display: block; direction: ltr; }
+  .eb .track i { display: block; height: 100%; width: 0; border-radius: 8px; transition: width 0.06s linear; }
+  .eb .v { font-variant-numeric: tabular-nums; text-align: left; }
+  .eb.total .n { color: var(--text); font-weight: 700; }
+</style>
+
+<script>
+  type TrackId = 'bowl' | 'hills' | 'ramp';
+  const root = document.getElementById('energyLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const caption = $<HTMLElement>('.caption');
+  const readouts = $<HTMLElement>('.readouts');
+  const val = (s: string) => Number($<HTMLInputElement>(s).value);
+
+  const G = 9.81;
+  const WIDTH = 12; // عرض المسار بالأمتار
+  const CTRL: Record<TrackId, [number, number][]> = {
+    bowl: [[0, 6], [6, 0], [12, 6]],
+    hills: [[0, 6], [3, 0.4], [6, 3.6], [9, 0], [12, 5]],
+    ramp: [[0, 5], [4.5, 0], [12, 0]],
+  };
+
+  let trackId: TrackId = 'bowl';
+  // جدول المسار: نقاط متقاربة وطول القوس التراكمي
+  let px: number[] = [], py: number[] = [], ps: number[] = [];
+  let S = 0, yMin = 0;
+
+  function heightAt(x: number) {
+    const c = CTRL[trackId];
+    for (let i = 0; i < c.length - 1; i++) {
+      const [x0, y0] = c[i], [x1, y1] = c[i + 1];
+      if (x >= x0 && x <= x1) {
+        const t = (x - x0) / (x1 - x0);
+        return y0 + ((y1 - y0) * (1 - Math.cos(Math.PI * t))) / 2;
+      }
+    }
+    return c[c.length - 1][1];
+  }
+  function buildTrack() {
+    px = []; py = []; ps = [];
+    const N = 1200;
+    let s = 0;
+    for (let i = 0; i <= N; i++) {
+      const x = (WIDTH * i) / N, y = heightAt(x);
+      if (i) s += Math.hypot(x - px[i - 1], y - py[i - 1]);
+      px.push(x); py.push(y); ps.push(s);
+    }
+    S = s;
+    yMin = Math.min(...py);
+  }
+  /** موقع النقطة وميل المسار عند طول قوس s */
+  function at(s: number) {
+    s = Math.max(0, Math.min(S, s));
+    let lo = 0, hi = ps.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (ps[m] <= s) lo = m; else hi = m; }
+    const seg = ps[hi] - ps[lo] || 1e-9;
+    const t = (s - ps[lo]) / seg;
+    const x = px[lo] + (px[hi] - px[lo]) * t;
+    const y = py[lo] + (py[hi] - py[lo]) * t;
+    const sin = (py[hi] - py[lo]) / seg; // dy/ds
+    const cos = (px[hi] - px[lo]) / seg; // dx/ds
+    return { x, y, sin, cos };
+  }
+  const sOfX = (x: number) => {
+    const i = Math.max(0, Math.min(px.length - 1, Math.round((x / WIDTH) * (px.length - 1))));
+    return ps[i];
+  };
+
+  // الحالة
+  let s = 0, v = 0, heat = 0, roll = 0;
+  let paused = false, holding = false;
+  let simT = 0;
+  let stillT = 0; // كم بقيت الكرة ساكنة
+  let hist: { t: number; ke: number; pe: number; heat: number }[] = [];
+  let maxE = 1;
+  let lastPushT = -1;
+
+  function place(sNew: number) {
+    s = sNew; v = 0; heat = 0; simT = 0; stillT = 0; hist = []; lastPushT = -1;
+    const m = val('.mass');
+    maxE = Math.max(1, m * G * (Math.max(...py) - yMin));
+  }
+  function reset() {
+    buildTrack();
+    place(sOfX(0.8));
+  }
+
+  function step(dt: number) {
+    if (paused || holding) return;
+    const m = val('.mass');
+    const mu = val('.mu');
+    const sub = 8;
+    const h = dt / sub;
+    for (let k = 0; k < sub; k++) {
+      const p = at(s);
+      let a = -G * p.sin;
+      const normal = G * Math.abs(p.cos);
+      if (mu > 0) {
+        if (Math.abs(v) > 1e-3) {
+          a -= Math.sign(v) * mu * normal;
+        } else if (Math.abs(G * p.sin) <= mu * normal) {
+          // الاحتكاك السكوني يكفي لإمساك الكرة
+          v = 0;
+          continue;
+        } else {
+          a -= Math.sign(-p.sin) * mu * normal;
+        }
+      }
+      const vOld = v;
+      v += a * h;
+      // عندما يعكس الاحتكاك وحده الاتجاه، نوقف الكرة بدل أن نعكسها
+      if (mu > 0 && vOld !== 0 && Math.sign(v) !== Math.sign(vOld) && Math.abs(G * p.sin) <= mu * normal) v = 0;
+      const ds = v * h;
+      if (mu > 0) heat += m * mu * normal * Math.abs(ds);
+      s += ds;
+      if (s < 0) { s = -s; v = -v; }
+      if (s > S) { s = 2 * S - s; v = -v; }
+    }
+    roll += (v * dt) / 0.35;
+    simT += dt;
+    stillT = Math.abs(v) < 0.01 ? stillT + dt : 0;
+    const p = at(s);
+    if (simT - lastPushT >= 0.05) {
+      lastPushT = simT;
+      hist.push({ t: simT, ke: 0.5 * m * v * v, pe: m * G * (p.y - yMin), heat });
+      while (hist.length && simT - hist[0].t > 10) hist.shift();
+    }
+  }
+
+  const fit = (c: HTMLCanvasElement) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const { width, height } = c.getBoundingClientRect();
+    const W = Math.round(width * dpr), H = Math.round(height * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.direction = 'ltr';
+    return { ctx, w: width, h: height };
+  };
+
+  let view = { ppm: 50, ox: 0, oy: 0 };
+  function drawScene() {
+    const { ctx, w, h } = fit(scene);
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#0d1838');
+    g.addColorStop(1, '#152452');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+
+    const yMax = Math.max(...py);
+    const ppm = Math.min((w - 40) / WIDTH, (h - 70) / (yMax - yMin + 0.8));
+    const ox = (w - WIDTH * ppm) / 2;
+    const oy = h - 30;
+    view = { ppm, ox, oy };
+    const X = (x: number) => ox + x * ppm;
+    const Y = (y: number) => oy - (y - yMin) * ppm;
+
+    // خطوط الارتفاع كل متر
+    ctx.strokeStyle = '#ffffff14';
+    ctx.fillStyle = '#ffffff60';
+    ctx.font = '11px system-ui';
+    ctx.textAlign = 'left';
+    ctx.lineWidth = 1;
+    for (let m = 0; m <= Math.ceil(yMax - yMin); m++) {
+      ctx.beginPath(); ctx.moveTo(ox, Y(yMin + m)); ctx.lineTo(ox + WIDTH * ppm, Y(yMin + m)); ctx.stroke();
+      ctx.fillText(`${m} m`, 4, Y(yMin + m) + 4);
+    }
+
+    // مستوى الطاقة الكلية الحالية (أقصى ارتفاع تبلغه الكرة)
+    const m = val('.mass');
+    const p = at(s);
+    const E = 0.5 * m * v * v + m * G * (p.y - yMin);
+    const hE = E / (m * G);
+    ctx.setLineDash([6, 6]);
+    ctx.strokeStyle = '#5ad19aaa';
+    ctx.beginPath(); ctx.moveTo(ox, Y(yMin + hE)); ctx.lineTo(ox + WIDTH * ppm, Y(yMin + hE)); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // المسار
+    ctx.beginPath();
+    ctx.moveTo(X(px[0]), Y(py[0]));
+    for (let i = 1; i < px.length; i += 4) ctx.lineTo(X(px[i]), Y(py[i]));
+    ctx.lineTo(X(px[px.length - 1]), Y(py[py.length - 1]));
+    ctx.lineTo(X(WIDTH), h);
+    ctx.lineTo(X(0), h);
+    ctx.closePath();
+    const mu = val('.mu');
+    ctx.fillStyle = mu > 0.15 ? '#4a3a2b' : mu > 0 ? '#3a4660' : '#2a3561';
+    ctx.fill();
+    ctx.strokeStyle = mu > 0 ? '#c9a27a' : '#c9cfe4';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(X(px[0]), Y(py[0]));
+    for (let i = 1; i < px.length; i += 4) ctx.lineTo(X(px[i]), Y(py[i]));
+    ctx.lineTo(X(px[px.length - 1]), Y(py[py.length - 1]));
+    ctx.stroke();
+
+    ctx.font = '11px system-ui';
+    ctx.fillStyle = '#5ad19a';
+    ctx.textAlign = 'right';
+    ctx.fillText('أقصى ارتفاع ممكن بالطاقة الحالية', ox + WIDTH * ppm, Y(yMin + hE) - 6);
+
+    // الكرة: تقف فوق المسار باتجاه العمودي عليه
+    const r = 0.35 * ppm;
+    const nx = -p.sin, ny = p.cos; // العمودي على المسار (للأعلى)
+    const cx = X(p.x) + nx * r, cy = Y(p.y) - ny * r;
+    ctx.fillStyle = '#ffd166';
+    ctx.shadowColor = '#ffd166';
+    ctx.shadowBlur = 14;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#7a5a10';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(roll) * r, cy + Math.sin(roll) * r); ctx.stroke();
+
+    // خط الارتفاع من الكرة إلى مستوى الصفر
+    ctx.strokeStyle = '#f0a43a';
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.moveTo(X(p.x), Y(p.y)); ctx.lineTo(X(p.x), Y(yMin)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#f0a43a';
+    ctx.textAlign = 'left';
+    ctx.fillText(`h = ${(p.y - yMin).toFixed(2)} m`, X(p.x) + 8, (Y(p.y) + Y(yMin)) / 2);
+
+    // سهم السرعة
+    if (Math.abs(v) > 0.05) {
+      const L = Math.min(110, Math.abs(v) * 9) * Math.sign(v);
+      const ex = cx + p.cos * L, ey = cy - p.sin * L;
+      ctx.strokeStyle = '#4cc9f0';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.fillStyle = '#4cc9f0';
+      ctx.fillText(`${Math.abs(v).toFixed(1)} m/s`, ex + 6, ey - 6);
+    }
+    if (holding) {
+      ctx.fillStyle = '#e8ecf8';
+      ctx.textAlign = 'center';
+      ctx.fillText('اترك لتنطلق الكرة', cx, cy - r - 10);
+    }
+  }
+
+  function drawChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const L = 8, B = 16, T = 6;
+    const t0 = hist.length ? Math.max(0, hist[hist.length - 1].t - 10) : 0;
+    const X = (t: number) => L + ((t - t0) / 10) * (w - L - 8);
+    const Y = (e: number) => T + (1 - e / maxE) * (h - T - B);
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L, Y(0)); ctx.lineTo(w - 8, Y(0)); ctx.stroke();
+    const line = (f: (p: (typeof hist)[number]) => number, color: string, width = 2.2) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      hist.forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(f(p))) : ctx.moveTo(X(p.t), Y(f(p)))));
+      ctx.stroke();
+    };
+    line((p) => p.ke + p.pe + p.heat, '#5ad19a', 3);
+    line((p) => p.pe, '#f0a43a');
+    line((p) => p.ke, '#4cc9f0');
+    line((p) => p.heat, '#ef6a4c');
+  }
+
+  // ——— النصوص ———
+  let lastHtml = '';
+  function updateText() {
+    const m = val('.mass');
+    const mu = val('.mu');
+    const p = at(s);
+    const ke = 0.5 * m * v * v, pe = m * G * (p.y - yMin);
+    const tot = ke + pe + heat;
+    const setBar = (k: string, e: number) => {
+      const row = root.querySelector(`.eb[data-k="${k}"]`)!;
+      (row.querySelector('i') as HTMLElement).style.width = `${Math.min(100, (e / maxE) * 100)}%`;
+      row.querySelector('.v')!.textContent = `${Math.round(e)} J`;
+    };
+    setBar('ke', ke); setBar('pe', pe); setBar('heat', heat); setBar('tot', tot);
+
+    const h0 = tot / (m * G); // الارتفاع الذي بدأت منه الكرة
+    const cells: [string, string, boolean?][] = [
+      ['الارتفاع h', `${(p.y - yMin).toFixed(2)} m`],
+      ['السرعة v', `${Math.abs(v).toFixed(2)} m/s`],
+      ['أقصى سرعة متوقعة √(2gh₀)', `${Math.sqrt(2 * G * h0).toFixed(2)} m/s`, mu === 0],
+    ];
+    const html = cells.map(([k, vv, hl]) => `<div${hl ? ' class="hl"' : ''}><dt>${k}</dt><dd>${vv}</dd></div>`).join('');
+    if (html !== lastHtml) { readouts.innerHTML = html; lastHtml = html; }
+
+    let cap: string;
+    if (holding) cap = 'الكرة ممسوكة: كل طاقتها الآن طاقة وضع، تساوي mgh. اتركها وراقب الأشرطة.';
+    else if (mu === 0) {
+      cap = 'لا احتكاك: الطاقة تنتقل ذهابًا وإيابًا بين وضع وحركة، والشريط الأخضر (المجموع) لا يتحرك. والكرة تعود دائمًا إلى الارتفاع نفسه.';
+      if (trackId === 'hills') {
+        const hump = 3.6 - yMin;
+        cap = h0 < hump
+          ? `الكرة بدأت من ارتفاع ${h0.toFixed(2)} m، أقل من قمة التل الأوسط (${hump.toFixed(1)} m). لا تملك طاقة كافية لعبوره مهما انتظرت.`
+          : `بدأت الكرة من ${h0.toFixed(2)} m، أعلى من قمة التل الأوسط (${hump.toFixed(1)} m)، فتعبره. جرّب أن تضعها أخفض من القمة.`;
+      }
+    } else if (stillT > 0.4 && heat > 1) {
+      cap = `توقفت الكرة. ${Math.round(heat)} J تحوّلت إلى حرارة في الكرة والمسار. لم تختفِ الطاقة، بل تبعثرت في صورة يصعب استرجاعها.`;
+    } else {
+      cap = 'مع الاحتكاك: الطاقة الميكانيكية (حركة + وضع) تتناقص، والحرارة تزيد بالمقدار نفسه تمامًا. المجموع الأخضر ما زال ثابتًا.';
+    }
+    if (caption.textContent !== cap) caption.textContent = cap;
+  }
+
+  // ——— التفاعل ———
+  function setTrack(t: TrackId) {
+    trackId = t;
+    root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.track === t)));
+    reset();
+  }
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.addEventListener('click', () => setTrack(b.dataset.track as TrackId)));
+
+  const bind = (i: string, o: string, fmt: (v: number) => string, after?: () => void) => {
+    const inp = $<HTMLInputElement>(i), out = $<HTMLOutputElement>(o);
+    const upd = () => { out.textContent = fmt(Number(inp.value)); after?.(); };
+    inp.addEventListener('input', upd);
+    upd();
+  };
+  bind('.mu', '.mu-out', (x) => x.toFixed(2));
+  bind('.mass', '.mass-out', (x) => `${x} kg`, () => place(s));
+
+  $<HTMLButtonElement>('.drop').addEventListener('click', () => { paused = false; syncPause(); place(sOfX(0.8)); });
+  const pauseBtn = $<HTMLButtonElement>('.pause');
+  const syncPause = () => (pauseBtn.textContent = paused ? '▶ تابع' : '⏸ إيقاف مؤقت');
+  pauseBtn.addEventListener('click', () => { paused = !paused; syncPause(); });
+
+  // وضع الكرة بالضغط أو السحب على المسار
+  const xFromEvent = (e: PointerEvent) => {
+    const rect = scene.getBoundingClientRect();
+    return Math.max(0.05, Math.min(WIDTH - 0.05, (e.clientX - rect.left - view.ox) / view.ppm));
+  };
+  scene.addEventListener('pointerdown', (e) => {
+    holding = true;
+    scene.setPointerCapture(e.pointerId);
+    place(sOfX(xFromEvent(e)));
+  });
+  scene.addEventListener('pointermove', (e) => { if (holding) place(sOfX(xFromEvent(e))); });
+  const release = () => { if (holding) { holding = false; paused = false; syncPause(); } };
+  scene.addEventListener('pointerup', release);
+  scene.addEventListener('pointercancel', release);
+
+  let visible = true;
+  new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
+  let last = performance.now();
+  function loop(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (visible) { step(dt); drawScene(); drawChart(); updateText(); }
+    requestAnimationFrame(loop);
+  }
+  reset();
+  requestAnimationFrame(loop);
+</script>

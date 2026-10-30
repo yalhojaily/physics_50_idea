@@ -1,0 +1,362 @@
+---
+// مختبر قانون هوك: علّق أثقالًا، سجّل القياسات، واستنتج ثابت النابض
+import '../styles/lab.css';
+---
+
+<figure class="lab" id="hookeLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-spring="soft" aria-selected="true">نابض لين<small>k = 20 N/m</small></button>
+    <button class="tab" data-spring="stiff" aria-selected="false">نابض قاسٍ<small>k = 60 N/m</small></button>
+    <button class="tab" data-spring="mystery" aria-selected="false">نابض مجهول<small>k = ؟</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="نابض معلّق تُضاف إليه أثقال"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <div class="row">
+      <span class="lbl">الكتلة المعلّقة</span>
+      <input type="range" class="mass" min="0" max="1000" step="50" value="0" />
+      <output class="mass-out">0 g</output>
+    </div>
+    <div class="chips">
+      <button class="btn" data-add="-100">− 100 g</button>
+      <button class="btn" data-add="100">+ 100 g</button>
+      <button class="btn" data-add="200">+ 200 g</button>
+    </div>
+    <div class="row">
+      <button class="btn primary rec">● سجّل القياس</button>
+      <button class="btn clear">↺ امسح القياسات</button>
+      <button class="btn fresh">⟳ نابض جديد</button>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap">
+      <canvas class="chart" aria-label="القوة مقابل الاستطالة للقياسات المسجّلة"></canvas>
+      <p class="note">كل نقطة قياس سجّلته. الخط أفضل خط مستقيم يمر بالأصل عبر نقاط المنطقة المرنة، وميله هو k.</p>
+    </div>
+    <table class="log" hidden>
+      <thead><tr><th>#</th><th>الكتلة</th><th>القوة F</th><th>الاستطالة x</th><th>F / x</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</figure>
+
+<script>
+  type SpringId = 'soft' | 'stiff' | 'mystery';
+  interface Spec { k: number; limit: number } // limit: استطالة حد المرونة بالمتر
+
+  const root = document.getElementById('hookeLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const caption = $<HTMLElement>('.caption');
+  const readouts = $<HTMLElement>('.readouts');
+  const tbody = $<HTMLElement>('.log tbody');
+  const table = $<HTMLElement>('.log');
+  const massIn = $<HTMLInputElement>('.mass');
+  const recBtn = $<HTMLButtonElement>('.rec');
+
+  const G = 9.81;
+  const L0 = 0.25; // الطول الطبيعي بالمتر
+  const SPECS: Record<SpringId, () => Spec> = {
+    soft: () => ({ k: 20, limit: 0.35 }),
+    stiff: () => ({ k: 60, limit: 0.25 }),
+    mystery: () => ({ k: 22 + Math.round(Math.random() * 26), limit: 0.32 }),
+  };
+
+  let springId: SpringId = 'soft';
+  let spec: Spec = SPECS.soft();
+  // حالة اللدونة: الاستطالة الدائمة p، وأقصى استطالة بلغها النابض
+  let p = 0, xmax = 0;
+  let x = 0, v = 0; // الاستطالة الحالية وسرعتها
+  let loadKg = 0; // الحمل الفعلي: يلحق بالمنزلق تدريجيًا
+  let stillT = 0;
+  let records: { m: number; F: number; x: number; elastic: boolean }[] = [];
+
+  const massKg = () => Number(massIn.value) / 1000;
+
+  /** قوة النابض عند استطالة xx: مرنة حتى الحد، ثم تلين ويحدث تشوّه دائم */
+  function springForce(xx: number) {
+    if (xx <= xmax) return spec.k * (xx - p);
+    const Fy = spec.k * (xmax - p);
+    return Fy + 0.25 * spec.k * (xx - xmax);
+  }
+  function commitPlastic() {
+    if (x > xmax) {
+      const F = springForce(x);
+      xmax = x;
+      p = xmax - F / spec.k;
+    }
+  }
+
+  function freshSpring(id: SpringId) {
+    springId = id;
+    spec = SPECS[id]();
+    p = 0; xmax = spec.limit; x = 0; v = 0; stillT = 0; loadKg = 0;
+    records = [];
+    massIn.value = '0';
+    massIn.dispatchEvent(new Event('input'));
+    renderTable();
+  }
+
+  function step(dt: number) {
+    loadKg += (massKg() - loadKg) * (1 - Math.exp(-dt / 0.35));
+    if (Math.abs(massKg() - loadKg) < 1e-4) loadKg = massKg();
+    const m = Math.max(loadKg, 0.02); // الحامل نفسه خفيف
+    const c = 2 * 0.3 * Math.sqrt(spec.k * m); // تخامد يجعل الاهتزاز يهدأ خلال ثوانٍ
+    const n = 12, h = dt / n;
+    for (let i = 0; i < n; i++) {
+      const load = loadKg * G;
+      const a = (load - springForce(x) - c * v) / m;
+      v += a * h;
+      x += v * h;
+      if (x < p - 0.02) { x = p - 0.02; v = 0; } // لا يُضغط النابض أكثر من ذلك
+      commitPlastic();
+    }
+    stillT = Math.abs(v) < 0.003 && loadKg === massKg() ? stillT + dt : 0;
+  }
+
+  const fit = (c: HTMLCanvasElement) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const { width, height } = c.getBoundingClientRect();
+    const W = Math.round(width * dpr), H = Math.round(height * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.direction = 'ltr';
+    return { ctx, w: width, h: height };
+  };
+
+  function drawScene() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#0d1530';
+    ctx.fillRect(0, 0, w, h);
+    const top = 22;
+    const ppm = (h - top - 120) / (L0 + 1.0);
+    const sx = w * 0.45;
+
+    // الحامل العلوي
+    ctx.fillStyle = '#3a4878';
+    ctx.fillRect(sx - 90, top - 12, 180, 12);
+
+    // المسطرة: الصفر عند الطرف السفلي للنابض بلا حمل
+    const zeroY = top + L0 * ppm;
+    const rx = sx + 70;
+    ctx.fillStyle = '#e9dcc0';
+    ctx.fillRect(rx, zeroY - 8, 34, 1.0 * ppm + 16);
+    ctx.strokeStyle = '#3b2f1a';
+    ctx.fillStyle = '#3b2f1a';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.lineWidth = 1;
+    for (let cm = 0; cm <= 100; cm += 2) {
+      const y = zeroY + (cm / 100) * ppm;
+      const long = cm % 10 === 0;
+      ctx.beginPath(); ctx.moveTo(rx, y); ctx.lineTo(rx + (long ? 12 : 6), y); ctx.stroke();
+      if (long) ctx.fillText(`${cm}`, rx + 15, y + 3);
+    }
+    ctx.fillStyle = '#9aa5c8';
+    ctx.fillText('cm', rx + 4, zeroY - 12);
+
+    // حد المرونة على المسطرة
+    const limY = zeroY + spec.limit * ppm;
+    ctx.strokeStyle = '#ef6a4c';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(sx - 40, limY); ctx.lineTo(rx + 38, limY); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ef6a4c';
+    ctx.textAlign = 'left';
+    ctx.fillText('حد المرونة', rx + 40, limY + 4);
+
+    // النابض
+    const endY = top + (L0 + x) * ppm;
+    const coils = 16;
+    const lead = 10;
+    const len = endY - top - 2 * lead;
+    const amp = springId === 'stiff' ? 16 : 13;
+    ctx.strokeStyle = p > 0.003 ? '#ef6a4c' : x > 0.01 ? '#f27fb8' : '#c9cfe4';
+    ctx.lineWidth = springId === 'stiff' ? 3.4 : 2.2;
+    ctx.beginPath();
+    ctx.moveTo(sx, top);
+    ctx.lineTo(sx, top + lead);
+    for (let i = 0; i <= coils * 2; i++) {
+      ctx.lineTo(sx + (i % 2 ? amp : -amp), top + lead + (len * (i + 0.5)) / (coils * 2 + 1));
+    }
+    ctx.lineTo(sx, endY - lead);
+    ctx.lineTo(sx, endY);
+    ctx.stroke();
+
+    // مؤشر على المسطرة
+    ctx.strokeStyle = '#ffd166';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx, endY); ctx.lineTo(rx, endY); ctx.stroke();
+
+    // الحامل والأثقال: أقراص 100 g
+    const grams = Number(massIn.value);
+    ctx.strokeStyle = '#c9cfe4';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx, endY); ctx.lineTo(sx, endY + 10); ctx.stroke();
+    let y = endY + 10;
+    const discs = Math.floor(grams / 100);
+    const half = grams % 100 >= 50;
+    for (let i = 0; i < discs; i++) {
+      ctx.fillStyle = i % 2 ? '#d9922e' : '#f0a43a';
+      ctx.beginPath(); ctx.roundRect(sx - 30, y, 60, 9, 3); ctx.fill();
+      y += 10;
+    }
+    if (half) {
+      ctx.fillStyle = '#9b8cff';
+      ctx.beginPath(); ctx.roundRect(sx - 22, y, 44, 7, 3); ctx.fill();
+      y += 8;
+    }
+    if (grams > 0) {
+      ctx.fillStyle = '#e8ecf8';
+      ctx.font = '600 13px system-ui';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${grams} g`, sx - 38, endY + 20);
+      // سهم الوزن
+      const W = massKg() * G;
+      const L = Math.min(110, W * 9);
+      ctx.strokeStyle = '#ffd166';
+      ctx.fillStyle = '#ffd166';
+      ctx.lineWidth = 3;
+      const ax = sx - 120;
+      ctx.beginPath(); ctx.moveTo(ax, endY + 10); ctx.lineTo(ax, endY + 10 + L); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax, endY + 14 + L); ctx.lineTo(ax - 6, endY + 4 + L); ctx.lineTo(ax + 6, endY + 4 + L); ctx.closePath(); ctx.fill();
+      ctx.textAlign = 'right';
+      ctx.fillText(`W = ${W.toFixed(2)} N`, ax - 8, endY + 20 + L / 2);
+    }
+  }
+
+  function drawChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const muted = css.getPropertyValue('--muted');
+    const L = 40, B = 22, T = 8, R = 10;
+    const xMaxC = Math.max(0.2, ...records.map((r) => r.x)) * 1.1;
+    const fMaxC = Math.max(2, ...records.map((r) => r.F)) * 1.1;
+    const X = (xx: number) => L + (xx / xMaxC) * (w - L - R);
+    const Y = (F: number) => h - B - (F / fMaxC) * (h - B - T);
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    const xStep = xMaxC > 0.6 ? 0.2 : 0.1;
+    for (let xx = 0; xx <= xMaxC; xx += xStep) {
+      ctx.beginPath(); ctx.moveTo(X(xx), T); ctx.lineTo(X(xx), h - B); ctx.stroke();
+      ctx.fillText(`${Math.round(xx * 100)} cm`, X(xx), h - 6);
+    }
+    ctx.textAlign = 'right';
+    const fStep = fMaxC > 6 ? 2 : 1;
+    for (let F = 0; F <= fMaxC; F += fStep) {
+      ctx.beginPath(); ctx.moveTo(L, Y(F)); ctx.lineTo(w - R, Y(F)); ctx.stroke();
+      ctx.fillText(`${F} N`, L - 5, Y(F) + 4);
+    }
+    const kFit = fitK();
+    if (kFit) {
+      ctx.strokeStyle = '#5ad19a';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(xMaxC), Y(kFit * xMaxC)); ctx.stroke();
+      ctx.fillStyle = '#5ad19a';
+      ctx.textAlign = 'left';
+      ctx.font = '600 12px system-ui';
+      ctx.fillText(`الميل ≈ ${kFit.toFixed(1)} N/m`, L + 8, T + 14);
+    }
+    for (const r of records) {
+      ctx.fillStyle = r.elastic ? '#f0a43a' : '#ef6a4c';
+      ctx.beginPath(); ctx.arc(X(r.x), Y(r.F), 5, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  /** ميل أفضل خط يمر بالأصل لنقاط المنطقة المرنة: k = Σ(Fx) / Σ(x²) */
+  function fitK() {
+    const pts = records.filter((r) => r.elastic && r.x > 0.002);
+    if (pts.length < 2) return 0;
+    const sxy = pts.reduce((a, r) => a + r.F * r.x, 0);
+    const sxx = pts.reduce((a, r) => a + r.x * r.x, 0);
+    return sxy / sxx;
+  }
+
+  function renderTable() {
+    table.hidden = records.length === 0;
+    tbody.innerHTML = records
+      .map((r, i) => `<tr${r.elastic ? '' : ' style="color:#ef6a4c"'}><td>${i + 1}</td><td>${Math.round(r.m * 1000)} g</td><td>${r.F.toFixed(2)} N</td><td>${(r.x * 100).toFixed(1)} cm</td><td>${r.x > 0.002 ? (r.F / r.x).toFixed(1) : '—'}</td></tr>`)
+      .join('');
+  }
+
+  // ——— النصوص ———
+  let lastHtml = '';
+  function updateText() {
+    const F = massKg() * G;
+    const kFit = fitK();
+    const cells: [string, string, boolean?][] = [
+      ['الوزن F = mg', `${F.toFixed(2)} N`],
+      ['الاستطالة x', `${(x * 100).toFixed(1)} cm`],
+      ['F / x', x > 0.002 && massKg() > 0 && stillT > 0.3 ? `${(F / x).toFixed(1)} N/m` : '…', true],
+      ['k من الرسم', kFit ? `${kFit.toFixed(1)} N/m` : 'سجّل نقطتين', true],
+    ];
+    if (p > 0.003) cells.push(['تشوّه دائم', `${(p * 100).toFixed(1)} cm`]);
+    const html = cells.map(([k, vv, hl]) => `<div${hl ? ' class="hl"' : ''}><dt>${k}</dt><dd>${vv}</dd></div>`).join('');
+    if (html !== lastHtml) { readouts.innerHTML = html; lastHtml = html; }
+
+    let cap: string;
+    if (p > 0.003 && massKg() === 0)
+      cap = `أزلت كل الأثقال لكن النابض لم يعد إلى طوله الأصلي: بقيت استطالة دائمة ${(p * 100).toFixed(1)} cm. هذا ما يحدث بعد تجاوز حد المرونة.`;
+    else if (x > spec.limit + 0.002)
+      cap = 'تجاوزت حد المرونة! النابض يتشوه تشوهًا دائمًا، ولم تعد الاستطالة تتناسب مع القوة. أزل الأثقال لترى ماذا بقي.';
+    else if (stillT < 0.3 && massKg() > 0)
+      cap = 'انتظر حتى يهدأ الاهتزاز، ثم اقرأ الاستطالة على المسطرة.';
+    else if (records.length < 3)
+      cap = springId === 'mystery'
+        ? 'لا نعرف k لهذا النابض. علّق أثقالًا مختلفة، وسجّل كل قياس، ثم اقرأ k من ميل الخط.'
+        : 'أضف 100 g في كل مرة وسجّل القياس. لاحظ أن الاستطالة تزيد بالمقدار نفسه في كل مرة.';
+    else
+      cap = 'النقاط على خط مستقيم يمر بالأصل: ضاعف القوة تتضاعف الاستطالة. هذا هو قانون هوك، والميل هو صلابة النابض k.';
+    if (caption.textContent !== cap) caption.textContent = cap;
+    recBtn.disabled = stillT < 0.3;
+    recBtn.textContent = recBtn.disabled ? '… انتظر حتى يهدأ' : '● سجّل القياس';
+  }
+
+  // ——— التفاعل ———
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) =>
+    b.addEventListener('click', () => {
+      root.querySelectorAll<HTMLButtonElement>('.tab').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+      freshSpring(b.dataset.spring as SpringId);
+    }),
+  );
+  massIn.addEventListener('input', () => ($<HTMLOutputElement>('.mass-out').textContent = `${massIn.value} g`));
+  root.querySelectorAll<HTMLButtonElement>('[data-add]').forEach((b) =>
+    b.addEventListener('click', () => {
+      massIn.value = String(Math.max(0, Math.min(1000, Number(massIn.value) + Number(b.dataset.add))));
+      massIn.dispatchEvent(new Event('input'));
+    }),
+  );
+  recBtn.addEventListener('click', () => {
+    const m = massKg();
+    const F = m * G;
+    // نسجّل قيمة الاتزان (القراءة بعد هدوء الاهتزاز)
+    const xEq = x;
+    records = records.filter((r) => Math.abs(r.m - m) > 1e-6);
+    records.push({ m, F, x: xEq, elastic: xEq <= spec.limit + 0.002 && p < 0.003 });
+    records.sort((a, b) => a.m - b.m);
+    renderTable();
+  });
+  $<HTMLButtonElement>('.clear').addEventListener('click', () => { records = []; renderTable(); });
+  $<HTMLButtonElement>('.fresh').addEventListener('click', () => freshSpring(springId));
+
+  let visible = true;
+  new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
+  let last = performance.now();
+  function loop(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (visible) { step(dt); drawScene(); drawChart(); updateText(); }
+    requestAnimationFrame(loop);
+  }
+  freshSpring('soft');
+  requestAnimationFrame(loop);
+</script>

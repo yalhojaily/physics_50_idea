@@ -69,3 +69,5 @@ a { color: var(--accent); }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1205; }
 .btn[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: #1a1205; }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn:disabled:hover { border-color: var(--line); }

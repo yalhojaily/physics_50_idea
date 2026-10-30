@@ -1,0 +1,436 @@
+---
+// مختبر الحركة التوافقية البسيطة: كتلة ونابض، وبندول
+import '../styles/lab.css';
+---
+
+<figure class="lab" id="shmLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-tab="spring" aria-selected="true">كتلة ونابض<small>T = 2π√(m/k)</small></button>
+    <button class="tab" data-tab="pend" aria-selected="false">بندول<small>T = 2π√(L/g)</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="جسم يتذبذب، اسحبه لتغيير السعة"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <p class="note">اسحب الكتلة أو كرة البندول بالمؤشر ثم اتركها.</p>
+
+    <div class="pane" data-pane="spring">
+      <div class="row">
+        <span class="lbl">الكتلة m</span>
+        <input type="range" class="m" min="0.2" max="2" step="0.1" value="0.5" />
+        <output class="m-out">0.5 kg</output>
+      </div>
+      <div class="row">
+        <span class="lbl">ثابت النابض k</span>
+        <input type="range" class="k" min="5" max="50" step="1" value="20" />
+        <output class="k-out">20 N/m</output>
+      </div>
+      <div class="row">
+        <span class="lbl">السعة A</span>
+        <input type="range" class="amp" min="0.05" max="0.3" step="0.01" value="0.2" />
+        <output class="amp-out">0.20 m</output>
+      </div>
+      <label class="row"><input type="checkbox" class="circle" checked /> أظهر الدائرة المرجعية</label>
+    </div>
+
+    <div class="pane" data-pane="pend" hidden>
+      <div class="row">
+        <span class="lbl">طول الخيط L</span>
+        <input type="range" class="len" min="0.2" max="2.5" step="0.05" value="1" />
+        <output class="len-out">1.00 m</output>
+      </div>
+      <div class="row">
+        <span class="lbl">زاوية الإطلاق θ₀</span>
+        <input type="range" class="ang" min="5" max="80" step="1" value="15" />
+        <output class="ang-out">15°</output>
+      </div>
+      <div class="chips">
+        <button class="btn" data-g="9.81" aria-pressed="true">الأرض</button>
+        <button class="btn" data-g="1.62" aria-pressed="false">القمر</button>
+        <button class="btn" data-g="3.71" aria-pressed="false">المريخ</button>
+        <button class="btn" data-g="24.79" aria-pressed="false">المشتري</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <span class="lbl">التخامد</span>
+      <input type="range" class="damp" min="0" max="0.6" step="0.02" value="0" />
+      <output class="damp-out">0.00</output>
+    </div>
+    <div class="row">
+      <button class="btn primary go">▶ أطلق من جديد</button>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap">
+      <canvas class="chart" aria-label="الإزاحة مع الزمن"></canvas>
+      <p class="note">
+        <span style="color:#f0a43a">━ الإزاحة</span> &nbsp;
+        <span style="color:#4cc9f0">━ السرعة</span> (بمقياس مختلف) — آخر 8 ثوانٍ. الخطوط الرأسية الباهتة كل دور نظري T.
+      </p>
+    </div>
+  </div>
+</figure>
+
+<script>
+  type Tab = 'spring' | 'pend';
+  const root = document.getElementById('shmLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const caption = $<HTMLElement>('.caption');
+  const readouts = $<HTMLElement>('.readouts');
+  const val = (s: string) => Number($<HTMLInputElement>(s).value);
+
+  let tab: Tab = 'spring';
+  let gVal = 9.81;
+  let x = 0, v = 0; // للنابض: x بالمتر. للبندول: x هي الزاوية بالراديان
+  let t = 0;
+  let dragging = false;
+  let crossings: number[] = []; // أزمنة العبور الصاعد للصفر
+  let hist: { t: number; x: number; v: number }[] = [];
+
+  const omega0 = () => (tab === 'spring' ? Math.sqrt(val('.k') / val('.m')) : Math.sqrt(gVal / val('.len')));
+  const Ttheory = () => (2 * Math.PI) / omega0();
+  const ampNow = () => (tab === 'spring' ? val('.amp') : (val('.ang') * Math.PI) / 180);
+
+  function launch(from = ampNow()) {
+    x = from; v = 0; t = 0; crossings = []; hist = [];
+  }
+
+  function accel(xx: number, vv: number) {
+    const c = val('.damp');
+    if (tab === 'spring') return -(val('.k') / val('.m')) * xx - c * vv;
+    return -(gVal / val('.len')) * Math.sin(xx) - c * vv; // المعادلة الكاملة، لا التقريب
+  }
+
+  function step(dt: number) {
+    if (dragging) return;
+    const n = 10, h = dt / n;
+    for (let i = 0; i < n; i++) {
+      // RK4
+      const k1x = v, k1v = accel(x, v);
+      const k2x = v + 0.5 * h * k1v, k2v = accel(x + 0.5 * h * k1x, v + 0.5 * h * k1v);
+      const k3x = v + 0.5 * h * k2v, k3v = accel(x + 0.5 * h * k2x, v + 0.5 * h * k2v);
+      const k4x = v + h * k3v, k4v = accel(x + h * k3x, v + h * k3v);
+      const xOld = x;
+      x += (h / 6) * (k1x + 2 * k2x + 2 * k3x + k4x);
+      v += (h / 6) * (k1v + 2 * k2v + 2 * k3v + k4v);
+      t += h;
+      // عبور صاعد للصفر: نقدّر لحظته بالاستيفاء
+      if (xOld < 0 && x >= 0) {
+        crossings.push(t - h * (x / (x - xOld)));
+        if (crossings.length > 6) crossings.shift();
+      }
+    }
+    hist.push({ t, x, v });
+    while (hist.length && t - hist[0].t > 8) hist.shift();
+  }
+
+  const fit = (c: HTMLCanvasElement) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const { width, height } = c.getBoundingClientRect();
+    const W = Math.round(width * dpr), H = Math.round(height * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.direction = 'ltr';
+    return { ctx, w: width, h: height };
+  };
+
+  let geom = { cx: 0, ppm: 1, pivotX: 0, pivotY: 0, Lpx: 1 };
+
+  function drawSpring(ctx: CanvasRenderingContext2D, x1: number, x2: number, y: number, coils: number, amp: number) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y);
+    const lead = 12;
+    ctx.lineTo(x1 + lead, y);
+    const len = x2 - x1 - 2 * lead;
+    for (let i = 0; i <= coils * 2; i++) {
+      ctx.lineTo(x1 + lead + (len * (i + 0.5)) / (coils * 2 + 1), y + (i % 2 ? amp : -amp));
+    }
+    ctx.lineTo(x2 - lead, y);
+    ctx.lineTo(x2, y);
+    ctx.stroke();
+  }
+
+  function drawSpringScene() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#0d1530';
+    ctx.fillRect(0, 0, w, h);
+    const ppm = Math.min(360, (w - 80) / 1.3);
+    const cx = w * 0.56; // موضع الاتزان
+    geom.cx = cx; geom.ppm = ppm;
+    const floor = h - 70;
+    const bw = 38 + val('.m') * 16; // الكتلة الأكبر تُرسم أكبر
+    const by = floor - bw / 2;
+    const wallX = cx - 0.55 * ppm;
+    const bx = cx + x * ppm;
+
+    // الأرضية والجدار
+    ctx.fillStyle = '#2a3561';
+    ctx.fillRect(0, floor, w, h - floor);
+    ctx.fillStyle = '#3a4878';
+    ctx.fillRect(wallX - 16, floor - 130, 16, 130);
+    // علامات الاتزان والسعة
+    const A = val('.amp');
+    ctx.strokeStyle = '#ffffff30';
+    ctx.setLineDash([4, 5]);
+    for (const xx of [-A, 0, A]) {
+      ctx.beginPath(); ctx.moveTo(cx + xx * ppm, floor - 150); ctx.lineTo(cx + xx * ppm, floor + 16); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#9aa5c8';
+    ctx.font = '12px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('x = 0', cx, floor + 30);
+    ctx.fillText('+A', cx + A * ppm, floor + 30);
+    ctx.fillText('−A', cx - A * ppm, floor + 30);
+
+    // النابض: يتلوّن حسب الشد والانضغاط
+    const stretch = x / 0.55;
+    ctx.strokeStyle = stretch > 0.02 ? '#f27fb8' : stretch < -0.02 ? '#4cc9f0' : '#c9cfe4';
+    ctx.lineWidth = 2.5;
+    drawSpring(ctx, wallX, bx - bw / 2, by, 12, 14 + val('.k') * 0.12);
+
+    // الكتلة
+    ctx.fillStyle = '#f0a43a';
+    ctx.beginPath(); ctx.roundRect(bx - bw / 2, by - bw / 2, bw, bw, 6); ctx.fill();
+    ctx.fillStyle = '#12121a';
+    ctx.font = '700 13px system-ui';
+    ctx.fillText(`${val('.m')} kg`, bx, by + 5);
+
+    // سهم القوة المعيدة F = −kx
+    const F = -val('.k') * x;
+    if (Math.abs(F) > 0.05) {
+      const L = Math.max(-140, Math.min(140, F * 14));
+      const yA = by - bw / 2 - 18;
+      ctx.strokeStyle = '#ffd166';
+      ctx.fillStyle = '#ffd166';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(bx, yA); ctx.lineTo(bx + L, yA); ctx.stroke();
+      const d = Math.sign(L);
+      ctx.beginPath(); ctx.moveTo(bx + L, yA); ctx.lineTo(bx + L - d * 10, yA - 6); ctx.lineTo(bx + L - d * 10, yA + 6); ctx.closePath(); ctx.fill();
+      ctx.font = '600 12px system-ui';
+      ctx.fillText(`F = ${F.toFixed(1)} N`, bx + L / 2, yA - 8);
+    }
+
+    // الدائرة المرجعية: نقطة تدور بانتظام، وظلّها يطابق الكتلة
+    if ($<HTMLInputElement>('.circle').checked && !dragging) {
+      const ccy = 14 + 0.3 * ppm;
+      const w0 = omega0();
+      const ang = Math.atan2(-v / w0, x); // يزداد بانتظام: ωt
+      const R = Math.hypot(x, v / w0) * ppm;
+      ctx.strokeStyle = '#9b8cff66';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(cx, ccy, R, 0, Math.PI * 2); ctx.stroke();
+      const qx = cx + R * Math.cos(ang), qy = ccy - R * Math.sin(ang);
+      ctx.strokeStyle = '#9b8cffaa';
+      ctx.beginPath(); ctx.moveTo(cx, ccy); ctx.lineTo(qx, qy); ctx.stroke();
+      ctx.fillStyle = '#9b8cff';
+      ctx.beginPath(); ctx.arc(qx, qy, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#9b8cff88';
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(qx, qy); ctx.lineTo(bx, by - bw / 2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  function drawPendScene() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#0d1530';
+    ctx.fillRect(0, 0, w, h);
+    const L = val('.len');
+    const pivotX = w / 2, pivotY = 26;
+    const Lpx = ((h - 70) * L) / 2.5;
+    geom.pivotX = pivotX; geom.pivotY = pivotY; geom.Lpx = Lpx;
+    const bobX = pivotX + Math.sin(x) * Lpx;
+    const bobY = pivotY + Math.cos(x) * Lpx;
+
+    // السقف
+    ctx.fillStyle = '#3a4878';
+    ctx.fillRect(pivotX - 60, pivotY - 10, 120, 10);
+    // قوس السعة
+    const a0 = (val('.ang') * Math.PI) / 180;
+    ctx.strokeStyle = '#ffffff25';
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath(); ctx.arc(pivotX, pivotY, Lpx, Math.PI / 2 - a0, Math.PI / 2 + a0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pivotX, pivotY); ctx.lineTo(pivotX, pivotY + Lpx + 20); ctx.stroke();
+    ctx.setLineDash([]);
+    // الخيط والكرة
+    ctx.strokeStyle = '#c9cfe4';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(pivotX, pivotY); ctx.lineTo(bobX, bobY); ctx.stroke();
+    ctx.fillStyle = '#f0a43a';
+    ctx.shadowColor = '#f0a43a';
+    ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.arc(bobX, bobY, 16, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // الزاوية
+    ctx.fillStyle = '#9aa5c8';
+    ctx.font = '13px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(`θ = ${((x * 180) / Math.PI).toFixed(1)}°`, pivotX + 12, pivotY + 40);
+    ctx.fillText(`L = ${L.toFixed(2)} m`, 12, 22);
+    ctx.fillText(`g = ${gVal} m/s²`, 12, 42);
+  }
+
+  function drawChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const A = Math.max(1e-6, ampNow() * 1.1);
+    const vA = A * omega0();
+    const L = 8, T = 6, B = 6;
+    const t0 = Math.max(0, t - 8);
+    const X = (tt: number) => L + ((tt - t0) / 8) * (w - L - 8);
+    const Y = (val: number, scale: number) => T + (0.5 - val / (2 * scale)) * (h - T - B);
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L, Y(0, 1)); ctx.lineTo(w - 8, Y(0, 1)); ctx.stroke();
+    // خطوط كل دور نظري
+    const Tp = Ttheory();
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    for (let k = Math.ceil(t0 / Tp); k * Tp <= t; k++) {
+      ctx.beginPath(); ctx.moveTo(X(k * Tp), T); ctx.lineTo(X(k * Tp), h - B); ctx.stroke();
+    }
+    const line = (f: (p: (typeof hist)[number]) => number, scale: number, color: string, width: number) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      hist.forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(f(p), scale)) : ctx.moveTo(X(p.t), Y(f(p), scale))));
+      ctx.stroke();
+    };
+    line((p) => p.v, vA, '#4cc9f0', 1.6);
+    line((p) => p.x, A, '#f0a43a', 2.6);
+  }
+
+  // ——— النصوص ———
+  let lastHtml = '';
+  function updateText() {
+    const Tt = Ttheory();
+    const Tm = crossings.length >= 2 ? (crossings[crossings.length - 1] - crossings[0]) / (crossings.length - 1) : NaN;
+    const meas = Number.isFinite(Tm) ? `${Tm.toFixed(3)} s` : '…';
+    let cells: [string, string, boolean?][];
+    if (tab === 'spring') {
+      const a = -(val('.k') / val('.m')) * x;
+      cells = [
+        ['الدور النظري 2π√(m/k)', `${Tt.toFixed(3)} s`, true],
+        ['الدور المقيس', meas, true],
+        ['الإزاحة x', `${(x * 100).toFixed(1)} cm`],
+        ['السرعة v', `${v.toFixed(2)} m/s`],
+        ['التسارع a = −(k/m)x', `${a.toFixed(2)} m/s²`],
+      ];
+    } else {
+      cells = [
+        ['الدور التقريبي 2π√(L/g)', `${Tt.toFixed(3)} s`, true],
+        ['الدور المقيس', meas, true],
+        ['الفرق', Number.isFinite(Tm) ? `${(((Tm - Tt) / Tt) * 100).toFixed(1)} %` : '…'],
+        ['الزاوية الآن', `${((x * 180) / Math.PI).toFixed(1)}°`],
+      ];
+    }
+    const html = cells.map(([k, vv, hl]) => `<div${hl ? ' class="hl"' : ''}><dt>${k}</dt><dd>${vv}</dd></div>`).join('');
+    if (html !== lastHtml) { readouts.innerHTML = html; lastHtml = html; }
+
+    let cap: string;
+    const damp = val('.damp');
+    if (dragging) cap = 'اسحب ثم اترك. كلما أبعدتها أكثر، زادت القوة المعيدة التي تعيدها نحو المنتصف.';
+    else if (damp > 0) cap = 'مع التخامد تصغر السعة تدريجيًا كما في أي نابض أو أرجوحة حقيقية، لكن الدور يكاد لا يتغير.';
+    else if (tab === 'spring') {
+      cap = Math.abs(x) > 0.85 * val('.amp')
+        ? 'عند الطرفين: السرعة صفر، لكن القوة والتسارع في أقصاهما ويتجهان نحو المنتصف.'
+        : Math.abs(x) < 0.15 * val('.amp')
+        ? 'عند نقطة الاتزان: لا قوة ولا تسارع، لكن السرعة في أقصاها، فتتجاوز الكتلة المنتصف.'
+        : 'غيّر السعة وراقب الدور المقيس: لا يتغير. الدور يعتمد على الكتلة وصلابة النابض فقط.';
+    } else {
+      const ang = val('.ang');
+      cap = ang <= 20
+        ? 'عند الزوايا الصغيرة يكاد الدور المقيس يطابق القانون التقريبي. جرّب زاوية 70° وقارن.'
+        : `عند ${ang}° يطول الدور المقيس عن القانون التقريبي، لأن sin θ لم يعد يساوي θ تقريبًا. الحركة التوافقية «البسيطة» هنا تقريب.`;
+    }
+    if (caption.textContent !== cap) caption.textContent = cap;
+  }
+
+  // ——— التفاعل ———
+  function setTab(tb: Tab) {
+    tab = tb;
+    root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tb)));
+    root.querySelectorAll<HTMLElement>('.pane').forEach((p) => (p.hidden = p.dataset.pane !== tb));
+    launch();
+  }
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab as Tab)));
+
+  const bind = (i: string, o: string, fmt: (v: number) => string, relaunch = true) => {
+    const inp = $<HTMLInputElement>(i), out = $<HTMLOutputElement>(o);
+    const upd = () => { out.textContent = fmt(Number(inp.value)); if (relaunch) launch(); };
+    inp.addEventListener('input', upd);
+    out.textContent = fmt(Number(inp.value));
+  };
+  bind('.m', '.m-out', (v) => `${v.toFixed(1)} kg`);
+  bind('.k', '.k-out', (v) => `${v} N/m`);
+  bind('.amp', '.amp-out', (v) => `${v.toFixed(2)} m`);
+  bind('.len', '.len-out', (v) => `${v.toFixed(2)} m`);
+  bind('.ang', '.ang-out', (v) => `${v}°`);
+  bind('.damp', '.damp-out', (v) => v.toFixed(2), false);
+  root.querySelectorAll<HTMLButtonElement>('[data-g]').forEach((b) =>
+    b.addEventListener('click', () => {
+      gVal = Number(b.dataset.g);
+      root.querySelectorAll<HTMLButtonElement>('[data-g]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      launch();
+    }),
+  );
+  $<HTMLButtonElement>('.go').addEventListener('click', () => launch());
+
+  // السحب
+  scene.addEventListener('pointerdown', (e) => { dragging = true; scene.setPointerCapture(e.pointerId); drag(e); });
+  scene.addEventListener('pointermove', (e) => { if (dragging) drag(e); });
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    const from = x;
+    // نحدّث منزلق السعة ليطابق نقطة الإطلاق
+    if (tab === 'spring') {
+      const a = $<HTMLInputElement>('.amp');
+      a.value = String(Math.abs(from));
+      $<HTMLOutputElement>('.amp-out').textContent = `${Number(a.value).toFixed(2)} m`;
+    } else {
+      const a = $<HTMLInputElement>('.ang');
+      a.value = String(Math.round((Math.abs(from) * 180) / Math.PI));
+      $<HTMLOutputElement>('.ang-out').textContent = `${a.value}°`;
+    }
+    launch(from);
+  };
+  scene.addEventListener('pointerup', end);
+  scene.addEventListener('pointercancel', end);
+  function drag(e: PointerEvent) {
+    const rect = scene.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    v = 0;
+    if (tab === 'spring') {
+      x = Math.max(-0.3, Math.min(0.3, (mx - geom.cx) / geom.ppm));
+    } else {
+      const ang = Math.atan2(mx - geom.pivotX, my - geom.pivotY);
+      x = Math.max(-(80 * Math.PI) / 180, Math.min((80 * Math.PI) / 180, ang));
+    }
+    hist = []; crossings = []; t = 0;
+  }
+
+  let visible = true;
+  new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
+  let last = performance.now();
+  function loop(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (visible) {
+      step(dt);
+      if (tab === 'spring') drawSpringScene(); else drawPendScene();
+      drawChart();
+      updateText();
+    }
+    requestAnimationFrame(loop);
+  }
+  launch();
+  requestAnimationFrame(loop);
+</script>
