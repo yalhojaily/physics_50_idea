@@ -13,6 +13,21 @@ import '../styles/lab.css';
   <p class="caption" aria-live="polite"></p>
 
   <div class="controls">
+    <div class="row">
+      <button class="btn primary pause">⏸ إيقاف مؤقت</button>
+      <button class="btn stepb" title="تقدّم ثُمن دور">⏭ خطوة</button>
+      <button class="btn go">↺ أطلق من جديد</button>
+    </div>
+    <div class="row">
+      <span class="lbl">سرعة العرض</span>
+      <div class="chips">
+        <button class="btn" data-speed="1" aria-pressed="false"><span dir="ltr">1×</span></button>
+        <button class="btn" data-speed="0.5" aria-pressed="true"><span dir="ltr">½×</span></button>
+        <button class="btn" data-speed="0.25" aria-pressed="false"><span dir="ltr">¼×</span></button>
+        <button class="btn" data-speed="0.1" aria-pressed="false"><span dir="ltr">⅒×</span></button>
+      </div>
+    </div>
+    <p class="note">الإبطاء يغيّر العرض فقط: الأزمنة والدور في القراءات حقيقية دائمًا. أوقف الحركة مؤقتًا في أي لحظة ليظهر شرح ما يحدث في تلك اللحظة.</p>
     <p class="note">اسحب الكتلة أو كرة البندول بالمؤشر ثم اتركها.</p>
 
     <div class="pane" data-pane="spring">
@@ -58,9 +73,6 @@ import '../styles/lab.css';
       <input type="range" class="damp" min="0" max="0.6" step="0.02" value="0" />
       <output class="damp-out">0.00</output>
     </div>
-    <div class="row">
-      <button class="btn primary go">▶ أطلق من جديد</button>
-    </div>
 
     <dl class="readouts"></dl>
 
@@ -89,6 +101,8 @@ import '../styles/lab.css';
   let x = 0, v = 0; // للنابض: x بالمتر. للبندول: x هي الزاوية بالراديان
   let t = 0;
   let dragging = false;
+  let paused = false;
+  let speed = 0.5; // سرعة العرض: جزء من الزمن الحقيقي
   let crossings: number[] = []; // أزمنة العبور الصاعد للصفر
   let hist: { t: number; x: number; v: number }[] = [];
 
@@ -337,20 +351,32 @@ import '../styles/lab.css';
     let cap: string;
     const damp = val('.damp');
     if (dragging) cap = 'اسحب ثم اترك. كلما أبعدتها أكثر، زادت القوة المعيدة التي تعيدها نحو المنتصف.';
+    else if (paused) cap = momentText();
     else if (damp > 0) cap = 'مع التخامد تصغر السعة تدريجيًا كما في أي نابض أو أرجوحة حقيقية، لكن الدور يكاد لا يتغير.';
-    else if (tab === 'spring') {
-      cap = Math.abs(x) > 0.85 * val('.amp')
-        ? 'عند الطرفين: السرعة صفر، لكن القوة والتسارع في أقصاهما ويتجهان نحو المنتصف.'
-        : Math.abs(x) < 0.15 * val('.amp')
-        ? 'عند نقطة الاتزان: لا قوة ولا تسارع، لكن السرعة في أقصاها، فتتجاوز الكتلة المنتصف.'
-        : 'غيّر السعة وراقب الدور المقيس: لا يتغير. الدور يعتمد على الكتلة وصلابة النابض فقط.';
-    } else {
+    else if (tab === 'spring')
+      cap = 'غيّر السعة وراقب «الدور المقيس»: لا يتغير. الدور يعتمد على الكتلة وصلابة النابض فقط. أوقف الحركة عند الطرف أو عند المنتصف لترى ما يحدث هناك.';
+    else {
       const ang = val('.ang');
       cap = ang <= 20
         ? 'عند الزوايا الصغيرة يكاد الدور المقيس يطابق القانون التقريبي. جرّب زاوية 70° وقارن.'
         : `عند ${ang}° يطول الدور المقيس عن القانون التقريبي، لأن sin θ لم يعد يساوي θ تقريبًا. الحركة التوافقية «البسيطة» هنا تقريب.`;
     }
     if (caption.textContent !== cap) caption.textContent = cap;
+  }
+
+  /** شرح ما يحدث في اللحظة التي أوقفنا عندها الحركة */
+  function momentText() {
+    const A = Math.max(1e-6, Math.hypot(x, v / omega0()));
+    const r = Math.abs(x) / A;
+    const side = x > 0 ? 'يمين' : 'يسار';
+    const toward = v === 0 ? '' : (v > 0) === (x > 0) ? 'مبتعدة عن المنتصف' : 'متجهة نحو المنتصف';
+    const what = tab === 'spring' ? 'الكتلة' : 'الكرة';
+    if (r > 0.95)
+      return `متوقف عند الطرف تقريبًا: ${what} ساكنة للحظة، لكن القوة المعيدة والتسارع في أقصاهما ويتجهان نحو المنتصف. لهذا لا تبقى هنا.`;
+    if (r < 0.1)
+      return `متوقف عند نقطة الاتزان تقريبًا: لا قوة ولا تسارع هنا، لكن السرعة في أقصاها، فتتجاوز ${what} المنتصف بفعل قصورها الذاتي.`;
+    const slowing = toward === 'مبتعدة عن المنتصف';
+    return `${what} على ${side} المنتصف و${toward}. القوة تتجه نحو المنتصف دائمًا، ${slowing ? 'أي عكس الحركة، فهي تتباطأ.' : 'أي مع الحركة، فهي تتسارع.'} اضغط «خطوة» لتتقدم ثُمن دور.`;
   }
 
   // ——— التفاعل ———
@@ -381,7 +407,24 @@ import '../styles/lab.css';
       launch();
     }),
   );
-  $<HTMLButtonElement>('.go').addEventListener('click', () => launch());
+  const pauseBtn = $<HTMLButtonElement>('.pause');
+  const syncPause = () => (pauseBtn.textContent = paused ? '▶ تابع' : '⏸ إيقاف مؤقت');
+  pauseBtn.addEventListener('click', () => { paused = !paused; syncPause(); });
+  $<HTMLButtonElement>('.go').addEventListener('click', () => { paused = false; syncPause(); launch(); });
+  $<HTMLButtonElement>('.stepb').addEventListener('click', () => {
+    paused = true;
+    syncPause();
+    // ثُمن دور على دفعات صغيرة
+    const total = Ttheory() / 8;
+    const n = Math.ceil(total / 0.01);
+    for (let i = 0; i < n; i++) step(total / n);
+  });
+  root.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((b) =>
+    b.addEventListener('click', () => {
+      speed = Number(b.dataset.speed);
+      root.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    }),
+  );
 
   // السحب
   scene.addEventListener('pointerdown', (e) => { dragging = true; scene.setPointerCapture(e.pointerId); drag(e); });
@@ -400,6 +443,8 @@ import '../styles/lab.css';
       a.value = String(Math.round((Math.abs(from) * 180) / Math.PI));
       $<HTMLOutputElement>('.ang-out').textContent = `${a.value}°`;
     }
+    paused = false;
+    syncPause();
     launch(from);
   };
   scene.addEventListener('pointerup', end);
@@ -424,7 +469,7 @@ import '../styles/lab.css';
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (visible) {
-      step(dt);
+      if (!paused) step(dt * speed);
       if (tab === 'spring') drawSpringScene(); else drawPendScene();
       drawChart();
       updateText();
