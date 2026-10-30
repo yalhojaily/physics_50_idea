@@ -35,9 +35,9 @@ export const topics: Topic[] = [
   { id: 6, unit: 1, slug: 'simple-harmonic-motion', title: 'الحركة التوافقية البسيطة', en: 'Simple harmonic motion', prereqs: [7], ready: true },
   { id: 7, unit: 1, slug: 'hookes-law', title: 'قانون هوك', en: "Hooke's law", prereqs: [2], ready: true },
 
-  { id: 8, unit: 2, slug: 'ideal-gas-law', title: 'قانون الغاز المثالي', en: 'Ideal gas law', prereqs: [5] },
-  { id: 9, unit: 2, slug: 'second-law-of-thermodynamics', title: 'القانون الثاني للحرارة', en: 'Second law of thermodynamics', prereqs: [5, 8] },
-  { id: 10, unit: 2, slug: 'absolute-zero', title: 'الصفر المطلق', en: 'Absolute zero', prereqs: [8, 9] },
+  { id: 8, unit: 2, slug: 'ideal-gas-law', title: 'قانون الغاز المثالي', en: 'Ideal gas law', prereqs: [5], ready: true },
+  { id: 9, unit: 2, slug: 'second-law-of-thermodynamics', title: 'القانون الثاني للحرارة', en: 'Second law of thermodynamics', prereqs: [5, 8], ready: true },
+  { id: 10, unit: 2, slug: 'absolute-zero', title: 'الصفر المطلق', en: 'Absolute zero', prereqs: [8, 9], ready: true },
   { id: 11, unit: 2, slug: 'brownian-motion', title: 'الحركة البراونية', en: 'Brownian motion', prereqs: [8] },
   { id: 12, unit: 2, slug: 'chaos-theory', title: 'نظرية الفوضى', en: 'Chaos theory', prereqs: [2] },
   { id: 13, unit: 2, slug: 'bernoulli-equation', title: 'معادلة برنولي', en: 'Bernoulli equation', prereqs: [5] },

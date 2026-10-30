@@ -1,0 +1,38 @@
+---
+// أزرار التحكم بالزمن المشتركة بين المختبرات: إيقاف مؤقت، خطوة، سرعة العرض.
+// يربطها السكربت bindTimeControls في src/scripts/timectl.ts
+interface Props {
+  speeds?: number[];
+  initial?: number;
+  stepLabel?: string;
+  note?: string;
+}
+const {
+  speeds = [1, 0.5, 0.25, 0.1],
+  initial = 0.5,
+  stepLabel = '⏭ خطوة',
+  note = 'الإبطاء يغيّر العرض فقط، والأزمنة في القراءات حقيقية. أوقف الحركة مؤقتًا ليظهر شرح ما يحدث في تلك اللحظة.',
+} = Astro.props;
+const label = (s: number) => ({ 1: '1×', 0.5: '½×', 0.25: '¼×', 0.1: '⅒×', 2: '2×', 4: '4×' } as Record<number, string>)[s] ?? `${s}×`;
+---
+
+<div class="tctl">
+  <div class="row">
+    <button class="btn primary tc-pause">⏸ إيقاف مؤقت</button>
+    <button class="btn tc-step">{stepLabel}</button>
+    <slot />
+  </div>
+  <div class="row">
+    <span class="lbl">سرعة العرض</span>
+    <div class="chips">
+      {speeds.map((s) => (
+        <button class="btn" data-speed={s} aria-pressed={String(s === initial)}><span dir="ltr">{label(s)}</span></button>
+      ))}
+    </div>
+  </div>
+  {note && <p class="note">{note}</p>}
+</div>
+
+<style>
+  .tctl { display: grid; gap: 10px; }
+</style>

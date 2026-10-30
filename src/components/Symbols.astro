@@ -1,6 +1,7 @@
 ---
 // شرح رموز المعادلة: اضغط على الرمز ليظهر معناه
 import katex from 'katex';
+import { bidiHtml } from '../scripts/bidi';
 
 interface Props {
   items: { tex: string; meaning: string }[];
@@ -18,7 +19,7 @@ const render = (tex: string) => katex.renderToString(tex, { throwOnError: false 
   </div>
   {items.map((s, i) => (
     <p class="meaning" data-i={i} hidden>
-      <span class="sym ltr" set:html={render(s.tex)} /> {s.meaning}
+      <span class="sym ltr" set:html={render(s.tex)} /> <span set:html={bidiHtml(s.meaning)} />
     </p>
   ))}
 </div>

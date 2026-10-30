@@ -91,6 +91,7 @@
 </style>
 
 <script>
+  import { isolate } from '../scripts/bidi';
   type Mode = 'bucket' | 'universe';
   type View = 'newton' | 'mach';
 
@@ -399,7 +400,7 @@
     } else {
       t = 'عند ماخ: لا يوجد إلا الدوران النسبي. دوران الكون كله حول الدلو يكافئ دوران الدلو داخل الكون، فيتقعّر السطح.';
     }
-    if (caption.textContent !== t) caption.textContent = t;
+    { const c = isolate(t); if (caption.textContent !== c) caption.textContent = c; }
   }
 
   function updateButtons() {
@@ -446,7 +447,7 @@
   new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
   let last = performance.now();
   function frame(now: number) {
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
     last = now;
     step(dt);
     if (visible) {

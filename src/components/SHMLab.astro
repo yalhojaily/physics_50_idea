@@ -87,6 +87,7 @@ import '../styles/lab.css';
 </figure>
 
 <script>
+  import { isolate } from '../scripts/bidi';
   type Tab = 'spring' | 'pend';
   const root = document.getElementById('shmLab')!;
   const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
@@ -361,7 +362,7 @@ import '../styles/lab.css';
         ? 'عند الزوايا الصغيرة يكاد الدور المقيس يطابق القانون التقريبي. جرّب زاوية 70° وقارن.'
         : `عند ${ang}° يطول الدور المقيس عن القانون التقريبي، لأن sin θ لم يعد يساوي θ تقريبًا. الحركة التوافقية «البسيطة» هنا تقريب.`;
     }
-    if (caption.textContent !== cap) caption.textContent = cap;
+    { const c = isolate(cap); if (caption.textContent !== c) caption.textContent = c; }
   }
 
   /** شرح ما يحدث في اللحظة التي أوقفنا عندها الحركة */
@@ -466,7 +467,7 @@ import '../styles/lab.css';
   new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
   let last = performance.now();
   function loop(now: number) {
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
     last = now;
     if (visible) {
       if (!paused) step(dt * speed);

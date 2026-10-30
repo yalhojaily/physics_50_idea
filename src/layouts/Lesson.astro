@@ -2,6 +2,7 @@
 // قالب ثابت لكل درس. يأخذ رقم الموضوع من رأس ملف MDX ويبني الباقي من topics.ts
 import 'katex/dist/katex.min.css';
 import Base from './Base.astro';
+import { bidiHtml } from '../scripts/bidi';
 import { topicById, unitById, nextOf, lessonUrl, withBase, topics } from '../data/topics';
 
 const fm = Astro.props.frontmatter ?? Astro.props;
@@ -23,7 +24,7 @@ const linkOrSpan = (t: (typeof topics)[number]) => ({ href: t.ready ? lessonUrl(
         <p class="meta"><span class="badge">{unit.title}</span> الفكرة {topic.id} من 50</p>
         <h1>{topic.title}</h1>
         <p class="en ltr">{topic.en}</p>
-        <p class="idea"><span>الفكرة في جملة</span>{fm.idea}</p>
+        <p class="idea"><span>الفكرة في جملة</span><Fragment set:html={bidiHtml(fm.idea)} /></p>
       </div>
     </header>
 

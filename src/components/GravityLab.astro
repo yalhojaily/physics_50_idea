@@ -60,6 +60,7 @@ import '../styles/lab.css';
 </figure>
 
 <script>
+  import { isolate } from '../scripts/bidi';
   const root = document.getElementById('gravityLab')!;
   const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
   const scene = $<HTMLCanvasElement>('.scene');
@@ -338,7 +339,7 @@ import '../styles/lab.css';
     const html = cells.map(([k, v, hl]) => `<div${hl ? ' class="hl"' : ''}><dt>${k}</dt><dd>${v}</dd></div>`).join('');
     if (html !== lastHtml) { readouts.innerHTML = html; lastHtml = html; }
   }
-  const setCaption = (t: string) => { if (caption.textContent !== t) caption.textContent = t; };
+  const setCaption = (t: string) => { const c = isolate(t); if (caption.textContent !== c) caption.textContent = c; };
 
   function predict(v0: number) {
     const v = v0 * 1000;
@@ -439,7 +440,7 @@ import '../styles/lab.css';
   new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
   let last = performance.now();
   function loop(now: number) {
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
     last = now;
     if (tab === 1) stepShot(dt);
     if (visible) {

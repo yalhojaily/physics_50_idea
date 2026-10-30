@@ -5,15 +5,16 @@ interface Props {
   answer: number; // رقم الخيار الصحيح بدءًا من 0
   why: string;
 }
+import { bidiHtml } from '../scripts/bidi';
 const { q, options, answer, why } = Astro.props;
 ---
 
 <div class="quiz" data-answer={answer}>
-  <p class="q">{q}</p>
+  <p class="q" set:html={bidiHtml(q)} />
   <div class="opts">
-    {options.map((o, i) => <button class="opt" data-i={i}>{o}</button>)}
+    {options.map((o, i) => <button class="opt" data-i={i} set:html={bidiHtml(o)} />)}
   </div>
-  <p class="why" hidden><strong class="verdict"></strong> {why}</p>
+  <p class="why" hidden><strong class="verdict"></strong> <span set:html={bidiHtml(why)} /></p>
 </div>
 
 <style>

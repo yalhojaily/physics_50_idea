@@ -1,0 +1,327 @@
+---
+// مختبر الغاز المثالي: جزيئات تتصادم داخل أسطوانة لها مكبس
+import '../styles/lab.css';
+import TimeControls from './TimeControls.astro';
+---
+
+<figure class="lab" id="gasLab">
+  <div class="tabs" role="tablist">
+    <button class="tab" data-mode="boyle" aria-selected="true">بويل<small>T ثابتة، غيّر V</small></button>
+    <button class="tab" data-mode="gay" aria-selected="false">غاي-لوساك<small>V ثابت، غيّر T</small></button>
+    <button class="tab" data-mode="adiabatic" aria-selected="false">ضغط معزول<small>بلا تبادل حرارة</small></button>
+  </div>
+
+  <canvas class="scene" aria-label="جزيئات غاز تتحرك داخل أسطوانة لها مكبس"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <TimeControls>
+      <button class="btn reset">↺ من جديد</button>
+    </TimeControls>
+
+    <div class="row v-row">
+      <span class="lbl">الحجم V</span>
+      <input type="range" class="vol" min="0.3" max="1" step="0.05" value="1" />
+      <output class="vol-out">1.00 L</output>
+    </div>
+    <div class="row t-row" hidden>
+      <span class="lbl">درجة حرارة الحمّام</span>
+      <input type="range" class="temp" min="100" max="600" step="25" value="300" />
+      <output class="temp-out">300 K</output>
+    </div>
+    <div class="row">
+      <span class="lbl">عدد الجزيئات N</span>
+      <input type="range" class="num" min="50" max="250" step="25" value="100" />
+      <output class="num-out">100</output>
+    </div>
+    <div class="row">
+      <button class="btn primary rec">● سجّل نقطة</button>
+      <button class="btn clear">امسح النقاط</button>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap">
+      <canvas class="chart" aria-label="الضغط مقابل الحجم أو درجة الحرارة"></canvas>
+      <p class="note chart-note"></p>
+    </div>
+  </div>
+</figure>
+
+<script>
+  import { isolate } from '../scripts/bidi';
+  import { Gas, K_SIM, PressureMeter, speedColor } from '../scripts/gas';
+  import { bindTimeControls } from '../scripts/timectl';
+
+  type Mode = 'boyle' | 'gay' | 'adiabatic';
+  const root = document.getElementById('gasLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const caption = $<HTMLElement>('.caption');
+  const readouts = $<HTMLElement>('.readouts');
+  const recBtn = $<HTMLButtonElement>('.rec');
+  const val = (s: string) => Number($<HTMLInputElement>(s).value);
+  const time = bindTimeControls(root);
+
+  // معايرة العرض: الصندوق الكامل = 1 لتر، و100 جزيء عند 300 K تعطي ضغط الجو تقريبًا
+  const FULL_AREA = 0.7;
+  const P_CAL = 101.3 / ((100 * K_SIM * 300) / FULL_AREA); // kPa لكل وحدة ضغط محاكاة
+  const toKPa = (p: number) => p * P_CAL;
+  const toL = (a: number) => a / FULL_AREA;
+
+  const gas = new Gas();
+  let mode: Mode = 'boyle';
+  const meter = new PressureMeter(1);
+  let pAvg = 0; // الضغط المقيس بالـ kPa
+  let points: { V: number; T: number; P: number }[] = [];
+  let ref = { P: 0, V: 1 }; // نقطة بداية منحنى الضغط المعزول
+
+  function reset() {
+    gas.xw = gas.W * val('.vol');
+    gas.u = 0;
+    gas.thermostat = mode === 'adiabatic' ? null : val('.temp');
+    gas.fill(val('.num'), val('.temp'), 0, gas.xw);
+    meter.reset();
+    meter.seed(gas.idealPressure());
+    pAvg = toKPa(gas.idealPressure());
+    points = [];
+    ref = { P: pAvg, V: toL(gas.area()) };
+  }
+
+  function simulate(dt: number) {
+    const n = Math.max(1, Math.ceil(dt / (1 / 300)));
+    const h = dt / n;
+    const target = gas.W * val('.vol');
+    for (let i = 0; i < n; i++) {
+      gas.movePistonTo(target, h, mode === 'adiabatic' ? 0.12 : 0.25);
+      gas.step(h);
+    }
+    meter.update(gas, dt);
+    if (Math.abs(target - gas.xw) > 1e-6) meter.reset(); // المكبس ما زال يتحرك
+    pAvg = toKPa(meter.value());
+  }
+
+  const fit = (c: HTMLCanvasElement) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const { width, height } = c.getBoundingClientRect();
+    const W = Math.round(width * dpr), H = Math.round(height * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.direction = 'ltr';
+    return { ctx, w: width, h: height };
+  };
+
+  function drawScene() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#0b1020';
+    ctx.fillRect(0, 0, w, h);
+    const ppm = Math.min((w - 90) / gas.W, (h - 50) / gas.H);
+    const ox = 24, oy = (h - gas.H * ppm) / 2;
+    const X = (x: number) => ox + x * ppm, Y = (y: number) => oy + y * ppm;
+
+    // جدار الأسطوانة ولون الحمّام الحراري
+    const T = gas.temp();
+    if (gas.thermostat !== null) {
+      const t = Math.min(1, Math.max(0, (gas.thermostat - 100) / 500));
+      ctx.strokeStyle = `rgb(${Math.round(76 + 163 * t)},${Math.round(201 - 95 * t)},${Math.round(240 - 164 * t)})`;
+      ctx.lineWidth = 8;
+      ctx.globalAlpha = 0.45;
+      ctx.strokeRect(X(0) - 6, Y(0) - 6, gas.W * ppm + 12, gas.H * ppm + 12);
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = '#141c3a';
+    ctx.fillRect(X(0), Y(0), gas.xw * ppm, gas.H * ppm);
+    ctx.strokeStyle = '#c9cfe4';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(X(gas.W) + 10, Y(0)); ctx.lineTo(X(0), Y(0)); ctx.lineTo(X(0), Y(gas.H)); ctx.lineTo(X(gas.W) + 10, Y(gas.H));
+    ctx.stroke();
+
+    // الجزيئات ملونة حسب سرعتها
+    const kT = K_SIM * Math.max(T, 1);
+    const rad = Math.max(2.5, gas.r * ppm);
+    for (let i = 0; i < gas.n; i++) {
+      ctx.fillStyle = speedColor(gas.vx[i] ** 2 + gas.vy[i] ** 2, kT);
+      ctx.beginPath(); ctx.arc(X(gas.x[i]), Y(gas.y[i]), rad, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // المكبس
+    const px = X(gas.xw);
+    ctx.fillStyle = '#8b93b3';
+    ctx.fillRect(px, Y(0) + 2, 12, gas.H * ppm - 4);
+    ctx.fillStyle = '#5c6488';
+    ctx.fillRect(px + 12, Y(gas.H / 2) - 5, w, 10);
+
+    // مقياس الضغط
+    ctx.fillStyle = '#e8ecf8';
+    ctx.font = '600 13px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(`P ≈ ${pAvg.toFixed(0)} kPa`, X(0) + 8, Y(0) - 10 > 12 ? Y(0) - 10 : 14);
+    ctx.textAlign = 'right';
+    ctx.fillText(`T = ${T.toFixed(0)} K`, X(gas.W) + 10, Y(0) - 10 > 12 ? Y(0) - 10 : 14);
+  }
+
+  function drawChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const muted = css.getPropertyValue('--muted');
+    const L = 44, B = 22, Tp = 8, R = 10;
+    const N = val('.num');
+    const isPT = mode === 'gay';
+    const xMax = isPT ? 650 : 1.05;
+    const xMin = isPT ? 0 : 0.25;
+    const theoryTop =
+      mode === 'boyle' ? toKPa((N * K_SIM * val('.temp')) / (0.3 * FULL_AREA))
+      : mode === 'gay' ? toKPa((N * K_SIM * 650) / gas.area())
+      : Math.max(ref.P * 2.5, pAvg * 1.3);
+    const yMax = Math.max(50, theoryTop, pAvg * 1.15, ...points.map((p) => p.P)) * 1.05;
+    const X = (v: number) => L + ((v - xMin) / (xMax - xMin)) * (w - L - R);
+    const Y = (p: number) => h - B - (p / yMax) * (h - B - Tp);
+
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    const xs = isPT ? [0, 100, 200, 300, 400, 500, 600] : [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+    for (const v of xs) {
+      ctx.beginPath(); ctx.moveTo(X(v), Tp); ctx.lineTo(X(v), h - B); ctx.stroke();
+      ctx.fillText(isPT ? `${v} K` : `${v.toFixed(1)} L`, X(v), h - 6);
+    }
+    ctx.textAlign = 'right';
+    const stepP = yMax > 400 ? 100 : 50;
+    for (let p = 0; p <= yMax; p += stepP) {
+      ctx.beginPath(); ctx.moveTo(L, Y(p)); ctx.lineTo(w - R, Y(p)); ctx.stroke();
+      ctx.fillText(`${p}`, L - 5, Y(p) + 4);
+    }
+    ctx.save(); ctx.translate(11, h / 2 - 10); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'center'; ctx.fillText('P (kPa)', 0, 0); ctx.restore();
+
+    // المنحنى النظري (مقصوص داخل منطقة الرسم)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(L, Tp, w - L - R, h - B - Tp); ctx.clip();
+    ctx.strokeStyle = '#5ad19a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (mode === 'boyle') {
+      const c = toKPa((N * K_SIM * val('.temp')) / FULL_AREA); // P·V بوحدات kPa·L
+      for (let i = 0; i <= 80; i++) { const V = 0.3 + (0.75 * i) / 80; i ? ctx.lineTo(X(V), Y(c / V)) : ctx.moveTo(X(V), Y(c / V)); }
+    } else if (mode === 'gay') {
+      const slope = toKPa((N * K_SIM) / gas.area());
+      ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(650), Y(slope * 650));
+    } else {
+      // في بعدين γ = 2: P·V² ثابت عند الضغط المعزول البطيء
+      const c = ref.P * ref.V * ref.V;
+      for (let i = 0; i <= 80; i++) { const V = 0.3 + (0.75 * i) / 80; i ? ctx.lineTo(X(V), Y(c / (V * V))) : ctx.moveTo(X(V), Y(c / (V * V))); }
+      ctx.stroke();
+      // ومنحنى درجة الحرارة الثابتة للمقارنة
+      ctx.strokeStyle = '#9aa5c8';
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      const ci = ref.P * ref.V;
+      for (let i = 0; i <= 80; i++) { const V = 0.3 + (0.75 * i) / 80; i ? ctx.lineTo(X(V), Y(ci / V)) : ctx.moveTo(X(V), Y(ci / V)); }
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    for (const p of points) {
+      ctx.fillStyle = '#f0a43a';
+      ctx.beginPath(); ctx.arc(X(isPT ? p.T : p.V), Y(p.P), 5, 0, Math.PI * 2); ctx.fill();
+    }
+    // النقطة الحالية
+    ctx.strokeStyle = '#4cc9f0';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(X(isPT ? gas.temp() : toL(gas.area())), Y(pAvg), 6, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // ——— النصوص ———
+  let lastHtml = '';
+  function updateText() {
+    const T = gas.temp();
+    const V = toL(gas.area());
+    const Pid = toKPa(gas.idealPressure(T));
+    const cells: [string, string, boolean?][] = [
+      ['الحجم V', `${V.toFixed(2)} L`],
+      ['درجة الحرارة T', `${T.toFixed(0)} K`],
+      ['الضغط المقيس', `${pAvg.toFixed(1)} kPa`, true],
+      ['المتوقع NkT/V', `${Pid.toFixed(1)} kPa`, true],
+      ['PV / T', `${((pAvg * V) / T).toFixed(3)}`],
+    ];
+    const html = cells.map(([k, v, hl]) => `<div${hl ? ' class="hl"' : ''}><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+    if (html !== lastHtml) { readouts.innerHTML = html; lastHtml = html; }
+
+    const settled = meter.measured() > 3;
+    recBtn.disabled = !settled;
+    recBtn.textContent = settled ? '● سجّل نقطة' : '… انتظر حتى يستقر الضغط';
+
+    let cap: string;
+    if (time.paused)
+      cap = 'لقطة ثابتة: كل جزيء يتحرك في خط مستقيم حتى يصطدم بجزيء آخر أو بجدار. اللون يدل على السرعة: الأزرق بطيء والأحمر سريع. الضغط هو مجموع دفعات الجزيئات على الجدران في كل ثانية.';
+    else if (mode === 'boyle')
+      cap = 'الحرارة ثابتة لأن الأسطوانة في حمّام حراري. صغّر الحجم إلى النصف: تصطدم الجزيئات بالجدران ضعف المرات، فيتضاعف الضغط. سجّل نقاطًا عند أحجام مختلفة.';
+    else if (mode === 'gay')
+      cap = 'الحجم ثابت. ارفع حرارة الحمّام: تتسارع الجزيئات فتضرب الجدران أكثر وبقوة أكبر. لاحظ أن الخط في الرسم يتجه نحو الصفر عند 0 K.';
+    else
+      cap = 'لا حمّام حراري هنا. ادفع المكبس: الجزيئات ترتد عن مكبس يتقدم نحوها فتخرج أسرع، فترتفع الحرارة دون أي تسخين. لهذا تسخن منفاخة الدراجة.';
+    { const c = isolate(cap); if (caption.textContent !== c) caption.textContent = c; }
+  }
+
+  // ——— التفاعل ———
+  function setMode(m: Mode) {
+    mode = m;
+    root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === m)));
+    $<HTMLElement>('.v-row').hidden = m === 'gay';
+    $<HTMLElement>('.t-row').hidden = m !== 'gay';
+    const vol = $<HTMLInputElement>('.vol');
+    vol.value = m === 'gay' ? '0.6' : '1';
+    $<HTMLOutputElement>('.vol-out').textContent = `${Number(vol.value).toFixed(2)} L`;
+    const tmp = $<HTMLInputElement>('.temp');
+    tmp.value = '300';
+    $<HTMLOutputElement>('.temp-out').textContent = '300 K';
+    $<HTMLElement>('.chart-note').textContent =
+      m === 'boyle' ? 'الخط الأخضر: PV ثابت (قانون بويل). النقاط البرتقالية قياساتك، والدائرة الزرقاء الحالة الآن.'
+      : m === 'gay' ? 'الخط الأخضر: P تتناسب مع T، ويمر بالصفر عند الصفر المطلق. النقاط البرتقالية قياساتك.'
+      : 'الأخضر: منحنى الضغط المعزول (PV² ثابت في غاز ثنائي الأبعاد). المنقّط: منحنى الحرارة الثابتة للمقارنة.';
+    reset();
+  }
+  root.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode as Mode)));
+
+  $<HTMLInputElement>('.vol').addEventListener('input', (e) => {
+    $<HTMLOutputElement>('.vol-out').textContent = `${Number((e.target as HTMLInputElement).value).toFixed(2)} L`;
+    meter.reset();
+  });
+  $<HTMLInputElement>('.temp').addEventListener('input', (e) => {
+    const T = Number((e.target as HTMLInputElement).value);
+    $<HTMLOutputElement>('.temp-out').textContent = `${T} K`;
+    gas.thermostat = T;
+    meter.reset();
+  });
+  $<HTMLInputElement>('.num').addEventListener('input', (e) => {
+    $<HTMLOutputElement>('.num-out').textContent = (e.target as HTMLInputElement).value;
+    reset();
+  });
+  $<HTMLButtonElement>('.reset').addEventListener('click', reset);
+  $<HTMLButtonElement>('.clear').addEventListener('click', () => { points = []; ref = { P: pAvg, V: toL(gas.area()) }; });
+  recBtn.addEventListener('click', () => {
+    points.push({ V: toL(gas.area()), T: gas.temp(), P: pAvg });
+  });
+  time.onStep = () => simulate(0.1);
+
+  let visible = true;
+  new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
+  let last = performance.now();
+  function loop(now: number) {
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
+    last = now;
+    if (visible) {
+      if (!time.paused) simulate(dt * time.speed);
+      drawScene(); drawChart(); updateText();
+    }
+    requestAnimationFrame(loop);
+  }
+  setMode('boyle');
+  requestAnimationFrame(loop);
+</script>

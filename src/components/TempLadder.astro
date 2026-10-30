@@ -1,0 +1,87 @@
+---
+import { bidiHtml } from '../scripts/bidi';
+// سلّم درجات الحرارة: طول كل شريط يتناسب مع لوغاريتم الحرارة، فكل خطوة في المقياس عشرة أضعاف
+const items: { k: number; label: string; note?: string }[] = [
+  { k: 1.5e7, label: 'قلب الشمس' },
+  { k: 5800, label: 'سطح الشمس' },
+  { k: 1400, label: 'حمم بركانية' },
+  { k: 373.15, label: 'غليان الماء', note: '100 °C' },
+  { k: 310, label: 'جسم الإنسان', note: '37 °C' },
+  { k: 273.15, label: 'تجمّد الماء', note: '0 °C' },
+  { k: 195, label: 'ثلج جاف', note: '−78 °C' },
+  { k: 77, label: 'نيتروجين سائل', note: '−196 °C' },
+  { k: 40, label: 'سطح بلوتو' },
+  { k: 4.2, label: 'هيليوم سائل', note: '1908' },
+  { k: 2.725, label: 'إشعاع الخلفية الكونية', note: 'حرارة الفضاء العميق' },
+  { k: 1, label: 'سديم بوميرانغ', note: 'أبرد مكان طبيعي معروف' },
+  { k: 1.7e-7, label: 'أول تكاثف بوز-آينشتاين', note: '1995' },
+  { k: 3.8e-11, label: 'رقم قياسي مخبري', note: '2021' },
+];
+const lo = -11, hi = Math.log10(2e7);
+const frac = (k: number) => (Math.log10(k) - lo) / (hi - lo);
+const sup = (e: number) => String(e).replace('-', '⁻').replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+d]);
+const fmt = (k: number) => {
+  if (k >= 1e4) { const e = Math.floor(Math.log10(k)); return `${+(k / 10 ** e).toFixed(1)}×10${sup(e)} K`; }
+  if (k >= 1) return `${+k.toFixed(2)} K`;
+  const e = Math.floor(Math.log10(k));
+  return `${+(k / 10 ** e).toFixed(1)}×10${sup(e)} K`;
+};
+const ticks = [-10, -5, 0, 5];
+/** لون الشريط: أزرق للبارد جدًا، برتقالي فأحمر للحار */
+const color = (k: number) => {
+  const t = frac(k);
+  const stops = [[76, 201, 240], [155, 140, 255], [240, 164, 58], [239, 106, 76]];
+  const x = t * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(x)), f = x - i;
+  const c = stops[i].map((v, j) => Math.round(v + (stops[i + 1][j] - v) * f));
+  return `rgb(${c.join(',')})`;
+};
+---
+
+<figure class="ladder" aria-label="درجات حرارة من قلب الشمس إلى أبرد مختبر على مقياس لوغاريتمي">
+  <ol>
+    {items.map((it) => (
+      <li>
+        <span class="l">{it.label}{it.note && <em set:html={bidiHtml(it.note)} />}</span>
+        <span class="track">
+          {ticks.map((e) => <i class="tk" style={`left:${frac(10 ** e) * 100}%`} />)}
+          <span class="bar" style={`width:${Math.max(1.5, frac(it.k) * 100)}%;background:${color(it.k)}`} />
+        </span>
+        <span class="t ltr">{fmt(it.k)}</span>
+      </li>
+    ))}
+  </ol>
+  <div class="axis">
+    <span />
+    <span class="axis-in ltr">
+      {ticks.map((e) => <span style={`left:${frac(10 ** e) * 100}%`}>10{sup(e)} K</span>)}
+    </span>
+    <span />
+  </div>
+  <figcaption>طول الشريط على مقياس لوغاريتمي: بين كل علامتين رأسيتين فرق مئة ألف ضعف. والصفر المطلق نفسه لا مكان له على هذا المقياس، فهو أبعد من أي شريط مهما قصر.</figcaption>
+</figure>
+
+<style>
+  .ladder {
+    margin: 24px 0; padding: 16px 18px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    --cols: minmax(120px, 1.1fr) 2fr 92px;
+  }
+  ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  li { display: grid; grid-template-columns: var(--cols); align-items: center; gap: 10px; font-size: 14px; }
+  .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .l em { font-style: normal; color: var(--muted); font-size: 12px; margin-inline-start: 6px; }
+  .track { position: relative; height: 12px; background: var(--surface-2); border-radius: 6px; direction: ltr; }
+  .tk { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--line); }
+  .bar { position: absolute; inset-block: 0; left: 0; border-radius: 6px; }
+  .t { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+  .axis { display: grid; grid-template-columns: var(--cols); gap: 10px; margin-top: 6px; font-size: 11px; color: var(--muted); }
+  .axis-in { position: relative; height: 16px; }
+  .axis-in span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  figcaption { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  @media (max-width: 560px) {
+    .ladder { --cols: 96px 1fr 76px; }
+    li, .axis { font-size: 12.5px; gap: 6px; }
+    .l em { display: none; }
+    .t { font-size: 11.5px; }
+  }
+</style>

@@ -44,6 +44,7 @@ import '../styles/lab.css';
 </figure>
 
 <script>
+  import { isolate } from '../scripts/bidi';
   type SpringId = 'soft' | 'stiff' | 'mystery';
   interface Spec { k: number; limit: number } // limit: استطالة حد المرونة بالمتر
 
@@ -316,7 +317,7 @@ import '../styles/lab.css';
         : 'أضف 100 g في كل مرة وسجّل القياس. لاحظ أن الاستطالة تزيد بالمقدار نفسه في كل مرة.';
     else
       cap = 'النقاط على خط مستقيم يمر بالأصل: ضاعف القوة تتضاعف الاستطالة. هذا هو قانون هوك، والميل هو صلابة النابض k.';
-    if (caption.textContent !== cap) caption.textContent = cap;
+    { const c = isolate(cap); if (caption.textContent !== c) caption.textContent = c; }
     recBtn.disabled = stillT < 0.3;
     recBtn.textContent = recBtn.disabled ? '… انتظر حتى يهدأ' : '● سجّل القياس';
   }
@@ -352,7 +353,7 @@ import '../styles/lab.css';
   new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
   let last = performance.now();
   function loop(now: number) {
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
     last = now;
     if (visible) { step(dt); drawScene(); drawChart(); updateText(); }
     requestAnimationFrame(loop);

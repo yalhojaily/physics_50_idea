@@ -63,6 +63,7 @@ import '../styles/lab.css';
 </style>
 
 <script>
+  import { isolate } from '../scripts/bidi';
   type TrackId = 'bowl' | 'hills' | 'ramp';
   const root = document.getElementById('energyLab')!;
   const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
@@ -362,7 +363,7 @@ import '../styles/lab.css';
     } else {
       cap = 'مع الاحتكاك: الطاقة الميكانيكية (حركة + وضع) تتناقص، والحرارة تزيد بالمقدار نفسه تمامًا. المجموع الأخضر ما زال ثابتًا.';
     }
-    if (caption.textContent !== cap) caption.textContent = cap;
+    { const c = isolate(cap); if (caption.textContent !== c) caption.textContent = c; }
   }
 
   // ——— التفاعل ———
@@ -406,7 +407,7 @@ import '../styles/lab.css';
   new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
   let last = performance.now();
   function loop(now: number) {
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
     last = now;
     if (visible) { step(dt); drawScene(); drawChart(); updateText(); }
     requestAnimationFrame(loop);

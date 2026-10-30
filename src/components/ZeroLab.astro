@@ -1,0 +1,301 @@
+---
+// مختبر الصفر المطلق: ميزان حرارة الغاز ذو الحجم الثابت
+import '../styles/lab.css';
+import TimeControls from './TimeControls.astro';
+---
+
+<figure class="lab" id="zeroLab">
+  <canvas class="scene" aria-label="وعاء غاز مغمور في حمّام حرارته قابلة للتغيير، ومقياس ضغط"></canvas>
+  <p class="caption" aria-live="polite"></p>
+
+  <div class="controls">
+    <TimeControls initial={1} />
+
+    <div class="row">
+      <span class="lbl">الحمّام</span>
+      <div class="chips">
+        <button class="btn" data-c="-196">نيتروجين سائل</button>
+        <button class="btn" data-c="-78">ثلج جاف</button>
+        <button class="btn" data-c="0" aria-pressed="true">ماء مثلّج</button>
+        <button class="btn" data-c="100">ماء يغلي</button>
+        <button class="btn" data-c="250">زيت ساخن</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="lbl">أو اختر الحرارة</span>
+      <input type="range" class="tc" min="-200" max="300" step="1" value="0" />
+      <output class="tc-out">0 °C</output>
+    </div>
+    <div class="row">
+      <span class="lbl">كمية الغاز</span>
+      <div class="chips">
+        <button class="btn" data-n="60">قليلة</button>
+        <button class="btn" data-n="120" aria-pressed="true">متوسطة</button>
+        <button class="btn" data-n="200">كثيرة</button>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn primary rec">● سجّل القراءة</button>
+      <button class="btn clear">امسح القراءات</button>
+    </div>
+
+    <dl class="readouts"></dl>
+
+    <div class="chart-wrap">
+      <canvas class="chart" aria-label="الضغط مقابل درجة الحرارة المئوية مع امتداد الخط إلى الضغط صفر"></canvas>
+      <p class="note">كل لون كمية غاز مختلفة. الخط المتصل أفضل خط مستقيم عبر قراءاتك، والمنقّط امتداده حتى يصبح الضغط صفرًا.</p>
+    </div>
+  </div>
+</figure>
+
+<script>
+  import { isolate } from '../scripts/bidi';
+  import { Gas, K_SIM, PressureMeter, speedColor } from '../scripts/gas';
+  import { bindTimeControls } from '../scripts/timectl';
+
+  const root = document.getElementById('zeroLab')!;
+  const $ = <T extends Element>(s: string) => root.querySelector<T>(s)!;
+  const scene = $<HTMLCanvasElement>('.scene');
+  const chart = $<HTMLCanvasElement>('.chart');
+  const caption = $<HTMLElement>('.caption');
+  const readouts = $<HTMLElement>('.readouts');
+  const recBtn = $<HTMLButtonElement>('.rec');
+  const tcIn = $<HTMLInputElement>('.tc');
+  const time = bindTimeControls(root);
+
+  const COLORS: Record<number, string> = { 60: '#4cc9f0', 120: '#f0a43a', 200: '#f27fb8' };
+  const FULL_AREA = 0.42;
+  // معايرة: 120 جزيئًا عند 0 °C تعطي ضغط الجو تقريبًا
+  const P_CAL = 101.3 / ((120 * K_SIM * 273.15) / FULL_AREA);
+
+  const gas = new Gas({ W: 0.6, H: 0.7 });
+  let nGas = 120;
+  const meter = new PressureMeter(1);
+  let pAvg = 0;
+  const records: { n: number; c: number; P: number }[] = [];
+
+  const celsius = () => Number(tcIn.value);
+  const kelvin = () => celsius() + 273.15;
+
+  function refill() {
+    gas.thermostat = kelvin();
+    gas.fill(nGas, kelvin(), 0, gas.W);
+    meter.reset();
+    meter.seed(gas.idealPressure());
+    pAvg = gas.idealPressure() * P_CAL;
+  }
+
+  function simulate(dt: number) {
+    const n = Math.max(1, Math.ceil(dt / (1 / 300)));
+    for (let i = 0; i < n; i++) gas.step(dt / n);
+    meter.update(gas, dt);
+    pAvg = meter.value() * P_CAL;
+  }
+
+  /** أفضل خط مستقيم P = a + b·c لقراءات كمية غاز واحدة */
+  function fitLine(n: number) {
+    const pts = records.filter((r) => r.n === n);
+    if (pts.length < 2) return null;
+    const m = pts.length;
+    const sx = pts.reduce((a, r) => a + r.c, 0), sy = pts.reduce((a, r) => a + r.P, 0);
+    const sxx = pts.reduce((a, r) => a + r.c * r.c, 0), sxy = pts.reduce((a, r) => a + r.c * r.P, 0);
+    const den = m * sxx - sx * sx;
+    if (Math.abs(den) < 1e-9) return null;
+    const b = (m * sxy - sx * sy) / den;
+    const a = (sy - b * sx) / m;
+    return { a, b, zero: -a / b };
+  }
+
+  const fit = (c: HTMLCanvasElement) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const { width, height } = c.getBoundingClientRect();
+    const W = Math.round(width * dpr), H = Math.round(height * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.direction = 'ltr';
+    return { ctx, w: width, h: height };
+  };
+
+  function bathColor(c: number) {
+    const t = Math.min(1, Math.max(0, (c + 200) / 500));
+    return `rgb(${Math.round(60 + 180 * t)},${Math.round(130 - 30 * t)},${Math.round(220 - 170 * t)})`;
+  }
+
+  function drawScene() {
+    const { ctx, w, h } = fit(scene);
+    ctx.fillStyle = '#0b1020';
+    ctx.fillRect(0, 0, w, h);
+    const ppm = Math.min((w * 0.55) / gas.W, (h - 90) / gas.H);
+    const bw = gas.W * ppm, bhh = gas.H * ppm;
+    const ox = w * 0.38 - bw / 2, oy = 50;
+    // الحمّام
+    ctx.fillStyle = bathColor(celsius());
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath(); ctx.roundRect(ox - 30, oy + 30, bw + 60, bhh, 14); ctx.fill();
+    ctx.globalAlpha = 1;
+    // الوعاء والجزيئات
+    ctx.fillStyle = '#141c3a';
+    ctx.fillRect(ox, oy, bw, bhh);
+    for (let i = 0; i < gas.n; i++) {
+      ctx.fillStyle = speedColor(gas.vx[i] ** 2 + gas.vy[i] ** 2, K_SIM * 300);
+      ctx.beginPath(); ctx.arc(ox + gas.x[i] * ppm, oy + gas.y[i] * ppm, 3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.strokeStyle = '#c9cfe4';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(ox, oy, bw, bhh);
+    // أنبوب ومقياس الضغط
+    const gx = ox + bw + 70, gy = oy + 50, gr = 42;
+    ctx.beginPath(); ctx.moveTo(ox + bw, oy + 20); ctx.lineTo(gx - gr, oy + 20); ctx.lineTo(gx - gr, gy); ctx.stroke();
+    ctx.fillStyle = '#e8ecf8';
+    ctx.beginPath(); ctx.arc(gx, gy, gr, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#5c6488';
+    ctx.stroke();
+    // تدريج 0..200 kPa على قوس 270°
+    const a0 = Math.PI * 0.75, span = Math.PI * 1.5;
+    ctx.strokeStyle = '#12121a';
+    ctx.fillStyle = '#12121a';
+    ctx.font = '9px system-ui';
+    ctx.textAlign = 'center';
+    for (let k = 0; k <= 10; k++) {
+      const a = a0 + (span * k) / 10;
+      ctx.lineWidth = k % 5 === 0 ? 2 : 1;
+      ctx.beginPath(); ctx.moveTo(gx + Math.cos(a) * (gr - 4), gy + Math.sin(a) * (gr - 4)); ctx.lineTo(gx + Math.cos(a) * (gr - 10), gy + Math.sin(a) * (gr - 10)); ctx.stroke();
+      if (k % 5 === 0) ctx.fillText(`${k * 20}`, gx + Math.cos(a) * (gr - 19), gy + Math.sin(a) * (gr - 19) + 3);
+    }
+    const a = a0 + span * Math.min(1, pAvg / 200);
+    ctx.strokeStyle = '#ef6a4c';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx + Math.cos(a) * (gr - 8), gy + Math.sin(a) * (gr - 8)); ctx.stroke();
+    ctx.fillStyle = '#9aa5c8';
+    ctx.font = '12px system-ui';
+    ctx.fillText('kPa', gx, gy + gr + 16);
+    // ميزان حرارة نصي
+    ctx.textAlign = 'left';
+    ctx.font = '600 14px system-ui';
+    ctx.fillStyle = '#e8ecf8';
+    ctx.fillText(`${celsius()} °C = ${kelvin().toFixed(2)} K`, ox, oy - 16);
+  }
+
+  function drawChart() {
+    const { ctx, w, h } = fit(chart);
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const muted = css.getPropertyValue('--muted');
+    const L = 40, B = 22, T = 8, R = 10;
+    const cMin = -300, cMax = 300;
+    const pMax = Math.max(200, ...records.map((r) => r.P)) * 1.05;
+    const X = (c: number) => L + ((c - cMin) / (cMax - cMin)) * (w - L - R);
+    const Y = (p: number) => h - B - (p / pMax) * (h - B - T);
+    ctx.strokeStyle = css.getPropertyValue('--line');
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    for (let c = -300; c <= 300; c += 100) {
+      ctx.beginPath(); ctx.moveTo(X(c), T); ctx.lineTo(X(c), h - B); ctx.stroke();
+      ctx.fillText(`${c}°C`, X(c), h - 6);
+    }
+    ctx.textAlign = 'right';
+    for (let p = 0; p <= pMax; p += 50) {
+      ctx.beginPath(); ctx.moveTo(L, Y(p)); ctx.lineTo(w - R, Y(p)); ctx.stroke();
+      ctx.fillText(`${p}`, L - 5, Y(p) + 4);
+    }
+    // الصفر المطلق الحقيقي
+    ctx.strokeStyle = '#ef6a4c88';
+    ctx.setLineDash([2, 4]);
+    ctx.beginPath(); ctx.moveTo(X(-273.15), T); ctx.lineTo(X(-273.15), h - B); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(L, T, w - L - R, h - B - T); ctx.clip();
+    for (const n of [60, 120, 200]) {
+      const f = fitLine(n);
+      if (!f) continue;
+      const pts = records.filter((r) => r.n === n);
+      const cLo = Math.min(...pts.map((r) => r.c)), cHi = Math.max(...pts.map((r) => r.c));
+      ctx.strokeStyle = COLORS[n];
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(X(cLo), Y(f.a + f.b * cLo)); ctx.lineTo(X(cHi), Y(f.a + f.b * cHi)); ctx.stroke();
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath(); ctx.moveTo(X(cLo), Y(f.a + f.b * cLo)); ctx.lineTo(X(f.zero), Y(0)); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+    for (const r of records) {
+      ctx.fillStyle = COLORS[r.n];
+      ctx.beginPath(); ctx.arc(X(r.c), Y(r.P), 5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.strokeStyle = COLORS[nGas];
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(X(celsius()), Y(pAvg), 6, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // ——— النصوص ———
+  let lastHtml = '';
+  function updateText() {
+    const vrms = Math.sqrt((3 * 8.314 * kelvin()) / 0.028); // لو كان الغاز نيتروجين حقيقيًا
+    const f = fitLine(nGas);
+    const cells: [string, string, boolean?][] = [
+      ['الحرارة', `${celsius()} °C`],
+      ['الضغط', `${pAvg.toFixed(1)} kPa`, true],
+      ['سرعة جزيء نيتروجين نموذجية', `${vrms.toFixed(0)} m/s`],
+      ['الخط يقطع P = 0 عند', f ? `${f.zero.toFixed(0)} °C` : 'سجّل قراءتين', true],
+    ];
+    const html = cells.map(([k, v, hl]) => `<div${hl ? ' class="hl"' : ''}><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+    if (html !== lastHtml) { readouts.innerHTML = html; lastHtml = html; }
+
+    const settled = meter.measured() > 4;
+    recBtn.disabled = !settled;
+    recBtn.textContent = settled ? '● سجّل القراءة' : '… انتظر حتى يستقر الضغط';
+
+    const series = new Set(records.map((r) => r.n)).size;
+    let cap: string;
+    if (time.paused) cap = 'لقطة: الحمّام يحدد سرعة الجزيئات. كلما برد تباطأت، فضربت الجدران أقل وأضعف، فانخفض الضغط. وعند أبرد حرارة ممكنة تكاد تتوقف تمامًا.';
+    else if (records.length < 2) cap = 'اختر حمّامًا، وانتظر حتى يستقر المؤشر، ثم سجّل القراءة. سجّل ثلاث قراءات على الأقل عند حرارات متباعدة.';
+    else if (series < 2) cap = 'مدّ الخط نحو اليسار: عند أي حرارة يصبح الضغط صفرًا؟ ثم غيّر كمية الغاز وكرّر القياس.';
+    else cap = 'خطوط مختلفة الميل لكميات مختلفة من الغاز، لكنها كلها تلتقي عند الصفر نفسه تقريبًا: −273 °C. هذا هو الصفر المطلق.';
+    { const c = isolate(cap); if (caption.textContent !== c) caption.textContent = c; }
+  }
+
+  // ——— التفاعل ———
+  const setC = (c: number) => {
+    tcIn.value = String(c);
+    $<HTMLOutputElement>('.tc-out').textContent = `${c} °C`;
+    gas.thermostat = kelvin();
+    meter.reset();
+    root.querySelectorAll<HTMLButtonElement>('[data-c]').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.c) === c)));
+  };
+  tcIn.addEventListener('input', () => setC(celsius()));
+  root.querySelectorAll<HTMLButtonElement>('[data-c]').forEach((b) => b.addEventListener('click', () => setC(Number(b.dataset.c))));
+  root.querySelectorAll<HTMLButtonElement>('[data-n]').forEach((b) =>
+    b.addEventListener('click', () => {
+      nGas = Number(b.dataset.n);
+      root.querySelectorAll<HTMLButtonElement>('[data-n]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      refill();
+    }),
+  );
+  recBtn.addEventListener('click', () => {
+    const c = celsius();
+    const i = records.findIndex((r) => r.n === nGas && r.c === c);
+    if (i >= 0) records.splice(i, 1);
+    records.push({ n: nGas, c, P: pAvg });
+  });
+  $<HTMLButtonElement>('.clear').addEventListener('click', () => (records.length = 0));
+  time.onStep = () => simulate(0.2);
+
+  let visible = true;
+  new IntersectionObserver(([e]) => (visible = e.isIntersecting)).observe(root);
+  let last = performance.now();
+  function loop(now: number) {
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
+    last = now;
+    if (visible) {
+      if (!time.paused) simulate(dt * time.speed);
+      drawScene(); drawChart(); updateText();
+    }
+    requestAnimationFrame(loop);
+  }
+  refill();
+  requestAnimationFrame(loop);
+</script>
